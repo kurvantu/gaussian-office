@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  // These GPU checks use system fonts and do not depend on Google Fonts availability.
+  await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({ contentType: 'text/css', body: '' }));
+});
+
 // Inspect the component's real engine in tests without adding a production debug API.
 async function engineSnapshot(page: Page) {
   return page.evaluate(() => {
@@ -20,7 +25,14 @@ async function engineSnapshot(page: Page) {
       if (node.isMesh && node.layers.mask === 2) hiddenSurfaces++;
     });
     return {
-      splats: engine.gaussianArchitecture?.count + engine.gaussianGuide?.count,
+      proceduralSplats: engine.gaussianArchitecture?.count ?? 0,
+      guideSplats: engine.gaussianGuide?.count ?? 0,
+      guideId: engine.guide.root.uuid,
+      officeId: engine.officeEnvironment?.uuid ?? null,
+      officeVisible: engine.officeEnvironment?.visible ?? false,
+      officeSplats: engine.officeEnvironment?.numSplats ?? 0,
+      lodBudget: engine.spark.lodSplatCount,
+      floorVisible: engine.arch.walkableMeshes.find((m: any) => m.userData.roomId)?.visible,
       active: engine.spark.activeSplats,
       bones: engine.gaussianGuide?.mesh.skinning.numBones,
       digits: digitRoots,
@@ -34,7 +46,12 @@ async function engineSnapshot(page: Page) {
   });
 }
 
-test('Spark renders the editable model and preserves the articulated guide, editing, and tour', async ({ page }) => {
+test('the default office capture preserves the articulated guide, proxy edits, and tour', async ({ page }) => {
+  await page.setViewportSize({ width: 1060, height: 580 });
+  let officeDownloads = 0;
+  page.on('requestfinished', (request) => {
+    if (request.resourceType() === 'fetch' && new URL(request.url()).pathname === '/data/sog/office.sog') officeDownloads++;
+  });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
@@ -43,23 +60,35 @@ test('Spark renders the editable model and preserves the articulated guide, edit
   await page.goto('/');
   const canvas = page.locator('canvas[data-renderer]');
   await expect(canvas).toHaveAttribute('data-renderer', 'spark');
-  await expect.poll(async () => (await engineSnapshot(page)).active).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const state = await engineSnapshot(page);
+    return state.active - state.guideSplats;
+  }).toBeGreaterThan(0);
   const initial = await engineSnapshot(page);
-  expect(initial.splats).toBeGreaterThan(100_000);
+  expect(initial.officeId).toBeTruthy();
+  expect(initial.officeSplats).toBeGreaterThan(0);
+  expect(initial.officeSplats).toBeLessThanOrEqual(initial.lodBudget);
+  expect(initial.proceduralSplats).toBe(0);
+  expect(initial.floorVisible).toBe(false);
   expect(initial.bones).toBeGreaterThan(40);
   expect(initial.digits).toEqual([5, 5, 5, 5]);
   expect(initial.hiddenSurfaces).toBeGreaterThan(100);
   expect(initial.glError).toBe(0);
 
   await page.getByRole('button', { name: 'Rendering settings', exact: true }).click();
-  await expect(page.locator('#render-settings')).toContainText('not a photograph-trained capture');
+  await expect(page.locator('#render-settings')).toContainText('fixed SOG capture');
   await page.getByRole('button', { name: /Triangle mesh/ }).click();
   await expect(canvas).toHaveAttribute('data-renderer', 'triangles');
-  expect((await engineSnapshot(page)).hiddenSurfaces).toBe(0);
+  expect(await engineSnapshot(page)).toMatchObject({
+    officeVisible: false, floorVisible: true, hiddenSurfaces: 0, guideId: initial.guideId,
+  });
   await page.getByRole('button', { name: /Gaussian splatting/ }).click();
   await expect(canvas).toHaveAttribute('data-renderer', 'spark');
   await page.getByRole('button', { name: 'Fine detail', exact: true }).click();
-  await expect.poll(async () => (await engineSnapshot(page)).splats).toBeGreaterThan(initial.splats);
+  await expect.poll(async () => (await engineSnapshot(page)).guideSplats).toBeGreaterThan(initial.guideSplats);
+  expect(await engineSnapshot(page)).toMatchObject({
+    officeId: initial.officeId, officeVisible: true, lodBudget: initial.lodBudget * 2,
+  });
   await page.getByRole('button', { name: 'Balanced', exact: true }).click();
   await page.getByRole('button', { name: 'Close rendering settings', exact: true }).click();
 
@@ -71,6 +100,9 @@ test('Spark renders the editable model and preserves the articulated guide, edit
   await expect.poll(async () => (await engineSnapshot(page)).furniture).toBe(initial.furniture + 1);
   await page.getByTitle(/Undo last floorplan edit/).click();
   await expect.poll(async () => (await engineSnapshot(page)).furniture).toBe(initial.furniture);
+  await expect.poll(() => engineSnapshot(page)).toMatchObject({
+    officeId: initial.officeId, guideId: initial.guideId, floorVisible: false,
+  });
 
   await page.getByRole('button', { name: 'Inspect Guide', exact: true }).click();
   await page.getByRole('button', { name: /Hands \(5/ }).click();
@@ -85,10 +117,11 @@ test('Spark renders the editable model and preserves the articulated guide, edit
   await expect(page.getByText(/Virtual Tour.*Following Elena/)).toBeVisible();
   await expect.poll(async () => {
     const state = await engineSnapshot(page);
-    return Math.hypot(state.guideX + 4.55, state.guideZ - 2.15);
+    return Math.hypot(state.guideX - 0.5, state.guideZ + 0.6);
   }, { timeout: 45_000 }).toBeLessThan(0.2);
   await expect(page.getByText('Elena', { exact: false }).first()).toBeVisible();
   expect((await engineSnapshot(page)).glError).toBe(0);
+  expect(officeDownloads).toBe(1);
   expect(errors).toEqual([]);
 });
 
@@ -157,15 +190,33 @@ test('mobile navigation stays usable and floorplan presets rebuild their Gaussia
     return buttons.every((box, index) => box.left >= 0 && box.right <= innerWidth && (index === 0 || box.left >= buttons[index - 1].right - 1));
   });
   expect(headerFits).toBe(true);
-  await page.getByRole('button', { name: 'Nordic Courtyard Residence', exact: true }).click();
+  await page.getByRole('button', { name: 'Office Dining Hall', exact: true }).click();
   await page.getByRole('button', { name: /^Soho Gallery Loft/ }).click();
   await expect.poll(async () => (await engineSnapshot(page)).guideX).toBeCloseTo(-1.8, 1);
-  expect((await engineSnapshot(page)).splats).toBeGreaterThan(50_000);
+  expect((await engineSnapshot(page)).proceduralSplats).toBeGreaterThan(50_000);
+  expect((await engineSnapshot(page)).officeId).toBeNull();
   await page.getByRole('button', { name: 'Soho Gallery Loft', exact: true }).click();
   await page.getByRole('button', { name: /^Kyoto Garden Pavilion/ }).click();
   await expect.poll(async () => (await engineSnapshot(page)).guideX).toBeCloseTo(-1.6, 1);
-  expect((await engineSnapshot(page)).splats).toBeGreaterThan(50_000);
+  expect((await engineSnapshot(page)).proceduralSplats).toBeGreaterThan(50_000);
+  expect((await engineSnapshot(page)).officeId).toBeNull();
   await page.getByRole('button', { name: '3D Preview', exact: true }).click();
   await expect(page.locator('canvas[data-renderer]')).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test('a failed office load leaves the guide and the triangle plan interactive', async ({ page }) => {
+  await page.route('**/office.sog*', (route) => route.request().resourceType() === 'fetch'
+    ? route.fulfill({ status: 404, body: 'Missing capture' })
+    : route.continue()); // Allow Vite's asset URL module through.
+  await page.goto('/');
+  await expect(page.locator('canvas[data-renderer]')).toHaveAttribute('data-renderer', 'triangles');
+  expect(await engineSnapshot(page)).toMatchObject({
+    officeId: null, floorVisible: true, hiddenSurfaces: 0, digits: [5, 5, 5, 5],
+  });
+  await page.getByRole('button', { name: 'Rendering settings' }).click();
+  await expect(page.getByRole('alert')).toContainText('Could not load office.sog');
+  await page.getByRole('button', { name: 'Close rendering settings' }).click();
+  await page.getByRole('button', { name: 'Inspect Guide' }).click();
+  await expect(page.getByText('3D Guide Anatomy View')).toBeVisible();
 });

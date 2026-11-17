@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { SparkRenderer } from '@sparkjsdev/spark';
+import { SparkRenderer, type SplatMesh } from '@sparkjsdev/spark';
+import { OFFICE, OFFICE_VIEW } from '../data/office';
+import { loadOfficeEnvironment, officeLodBudget } from '../scene/officeEnvironment';
 import {
   FloorplanData,
   GuideGesture,
@@ -90,6 +92,11 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
   const [splatCounts, setSplatCounts] = useState({ architecture: 0, guide: 0 });
   const [sparkError, setSparkError] = useState<string | null>(null);
   const [sparkReady, setSparkReady] = useState(false);
+  const [officeError, setOfficeError] = useState<string | null>(null);
+  const officeRequest = useRef<AbortController | null>(null);
+  const isOffice = floorplan.id === OFFICE.id;
+  // Office detail changes select LOD nodes; they must not rebuild its navigation proxy.
+  const architectureQuality = isOffice ? null : splatQuality;
 
   // Keep latest callbacks & props in refs so the 60fps Three.js loop stays fresh without rebuilding
   const propsRef = useRef({
@@ -133,6 +140,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
     spark: SparkRenderer | null;
+    officeEnvironment: SplatMesh | null;
     gaussianArchitecture: GaussianRepresentation | null;
     gaussianGuide: GaussianRepresentation | null;
     controls: OrbitControls;
@@ -209,7 +217,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         autoUpdate: false,
         accumExtSplats: true,
         covSplats: true,
-        enableLod: false,
+        enableLod: true,
         sortRadial: true,
         minSortIntervalMs: 16,
         blurAmount: 0.3,
@@ -336,6 +344,14 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     const resetOrbitView = () => {
       const eng = engineRef.current;
       if (!eng) return;
+      if (propsRef.current.floorplan.id === OFFICE.id) {
+        eng.camTransition = {
+          active: true,
+          pos: new THREE.Vector3().copy(OFFICE_VIEW.position),
+          target: new THREE.Vector3().copy(OFFICE_VIEW.target),
+        };
+        return;
+      }
       const bounds = new THREE.Box3();
       propsRef.current.floorplan.walls.forEach((wall) => {
         bounds.expandByPoint(new THREE.Vector3(wall.start.x, 0, wall.start.z));
@@ -362,6 +378,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       camera,
       renderer,
       spark,
+      officeEnvironment: null,
       gaussianArchitecture: null,
       gaussianGuide: null,
       controls,
@@ -610,6 +627,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     );
     let lastStatusWalking: boolean | null = null;
     let sparkUpdating = false;
+    let nextOfficeStatsAt = 0;
     const gl = renderer.getContext() as WebGL2RenderingContext;
     let gpuFence: WebGLSync | null = null;
 
@@ -916,6 +934,16 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         sparkUpdating = true;
         void eng.spark.update({ scene, camera }).then(() => {
           if (disposed || propsRef.current.renderMethod !== 'gaussian') return;
+          if (eng.officeEnvironment?.visible) {
+            // Decoded is not yet drawable: LOD selection and the first GPU sort
+            // can take additional frames. Swap the proxy on the first office draw.
+            const architecture = eng.spark!.display.mapping.find((m) => m.node === eng.officeEnvironment)?.count ?? 0;
+            eng.arch?.setSurfacesVisible(architecture === 0);
+            if (now >= nextOfficeStatsAt) {
+              nextOfficeStatsAt = now + 500;
+              setSplatCounts((prev) => prev.architecture === architecture ? prev : { ...prev, architecture });
+            }
+          }
           renderer.render(scene, camera);
           gpuFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
           gl.flush();
@@ -983,9 +1011,12 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     eng.scene.add(built.group);
     eng.arch = built;
     eng.navGrid = new NavGrid(floorplan);
-    if (eng.spark) {
+    if (architectureQuality === null) {
+      // Only the interior floor is pickable, not the triangle preview's garden / plinth.
+      built.walkableMeshes = built.walkableMeshes.filter((mesh) => mesh.userData.roomId);
+    } else if (eng.spark) {
       try {
-        const gaussians = createGaussianRepresentation(built.group, 'architecture', splatQuality, floorplan);
+        const gaussians = createGaussianRepresentation(built.group, 'architecture', architectureQuality, floorplan);
         eng.gaussianArchitecture = gaussians;
         eng.scene.add(gaussians.mesh);
         gaussians.setEnabled(propsRef.current.renderMethod === 'gaussian');
@@ -993,7 +1024,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         setSplatCounts((previous) => ({ ...previous, architecture: gaussians.count }));
         void gaussians.ready.catch((error) => {
           console.error('Could not prepare architecture splats:', error);
-          if (engineRef.current === eng) {
+          if (engineRef.current === eng && eng.gaussianArchitecture === gaussians) {
             setSparkError('The splat scene could not be generated. Switch to the triangle preview.');
             setRenderMethod('triangles');
           }
@@ -1015,13 +1046,53 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       eng.guide.root.rotation.y = floorplan.guideStartYaw;
       eng.desiredYaw = floorplan.guideStartYaw;
       eng.guide.triggerWave(3.0);
+      eng.resetOrbitView();
       setFreeRoamInTour(false);
     }
-  }, [floorplan, splatQuality]);
+  }, [floorplan, architectureQuality]);
+
+  // A capture belongs to the preset, not a floorplan edit, lighting preset, or
+  // sampling setting. Keep one mesh across those changes and renderer switches.
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!isOffice || !eng?.spark || sparkError) return;
+    setOfficeError(null);
+    setSplatCounts((prev) => ({ ...prev, architecture: 0 }));
+    return () => {
+      officeRequest.current?.abort();
+      officeRequest.current = null;
+      eng.officeEnvironment?.removeFromParent();
+      eng.officeEnvironment?.dispose();
+      eng.officeEnvironment = null;
+    };
+  }, [isOffice, sparkError]);
+
+  // A visit in triangle mode alone must not download or decode the capture.
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!isOffice || renderMethod !== 'gaussian' || !eng?.spark || sparkError || officeRequest.current) return;
+    const controller = new AbortController();
+    officeRequest.current = controller;
+    void loadOfficeEnvironment(controller.signal).then((mesh) => {
+      if (controller.signal.aborted) {
+        mesh.dispose();
+        return;
+      }
+      eng.officeEnvironment = mesh;
+      mesh.visible = propsRef.current.renderMethod === 'gaussian';
+      eng.scene.add(mesh);
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      console.error('Could not load office.sog:', error);
+      setOfficeError('Could not load office.sog. Showing the navigation plan in triangle preview.');
+      setRenderMethod('triangles');
+    });
+  }, [isOffice, renderMethod, sparkError]);
 
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng?.spark) return;
+    eng.spark.lodSplatCount = officeLodBudget(splatQuality);
     eng.gaussianGuide?.dispose();
     eng.gaussianGuide = null;
     try {
@@ -1049,13 +1120,19 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     const eng = engineRef.current;
     if (!eng) return;
     const gaussian = renderMethod === 'gaussian' && eng.spark !== null;
+    if (eng.officeEnvironment) eng.officeEnvironment.visible = gaussian;
+    if (!gaussian) eng.arch?.setSurfacesVisible(true);
     eng.gaussianArchitecture?.setEnabled(gaussian);
     eng.gaussianGuide?.setEnabled(gaussian);
     if (eng.spark) eng.spark.visible = gaussian;
     eng.renderer.shadowMap.enabled = !gaussian;
     eng.renderer.domElement.dataset.renderer = gaussian ? 'spark' : 'triangles';
-    eng.renderer.domElement.dataset.splatCount = String(splatCounts.architecture + splatCounts.guide);
-  }, [renderMethod, splatCounts]);
+  }, [renderMethod]);
+
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (eng) eng.renderer.domElement.dataset.splatCount = String(splatCounts.architecture + splatCounts.guide);
+  }, [splatCounts]);
 
   // Apply Lighting Preset transitions
   useEffect(() => {
@@ -1195,6 +1272,8 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
               ? freeRoamInTour
                 ? 'Virtual Tour · Free Walk'
                 : 'Virtual Tour · Following Elena'
+              : isOffice && renderMethod === 'gaussian'
+              ? '3D Office Capture'
               : '3D Architectural Preview'}
           </span>
           <span className="hidden 2xl:inline text-[#6B6860] border-l border-black/10 pl-2">
@@ -1208,8 +1287,9 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
           method={renderMethod}
           quality={splatQuality}
           counts={splatCounts}
-          ready={sparkReady}
-          error={sparkError}
+          office={isOffice}
+          ready={sparkReady && (!isOffice || splatCounts.architecture > 0)}
+          error={sparkError ?? (isOffice ? officeError : null)}
           onMethodChange={setRenderMethod}
           onQualityChange={setSplatQuality}
         />
@@ -1228,21 +1308,23 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
           </button>
         )}
 
-        <button
-          onClick={cycleWalls}
-          className="studio-glass rounded-full px-2.5 py-1.5 text-xs font-medium text-[#1C1B19] hover:bg-white transition flex items-center gap-1.5 cursor-pointer"
-          title="Cycle wall display mode (Smart Cutaway / Full Height / Dollhouse Low)"
-        >
-          <Layers className="w-3.5 h-3.5 text-[#6B6860]" />
-          <span className="hidden md:inline capitalize">
-            {wallMode === 'cutaway' ? 'Cutaway' : wallMode === 'full' ? 'Full Walls' : 'Low Walls'}
-          </span>
-        </button>
+        {(!isOffice || renderMethod === 'triangles') && (
+          <button
+            onClick={cycleWalls}
+            className="studio-glass rounded-full px-2.5 py-1.5 text-xs font-medium text-[#1C1B19] hover:bg-white transition flex items-center gap-1.5 cursor-pointer"
+            title="Cycle wall display mode (Smart Cutaway / Full Height / Dollhouse Low)"
+          >
+            <Layers className="w-3.5 h-3.5 text-[#6B6860]" />
+            <span className="hidden md:inline capitalize">
+              {wallMode === 'cutaway' ? 'Cutaway' : wallMode === 'full' ? 'Full Walls' : 'Low Walls'}
+            </span>
+          </button>
+        )}
 
         <button
           onClick={cycleLighting}
           className="studio-glass rounded-full px-2.5 py-1.5 text-xs font-medium text-[#1C1B19] hover:bg-white transition flex items-center gap-1.5 cursor-pointer"
-          title="Switch lighting atmosphere (Nordic Daylight / Golden Hour / Studio)"
+          title={isOffice && renderMethod === 'gaussian' ? "Change guide lighting (office lighting is baked)" : "Switch lighting atmosphere (Nordic Daylight / Golden Hour / Studio)"}
         >
           {lighting === 'daylight' && <Sun className="w-3.5 h-3.5 text-amber-600" />}
           {lighting === 'golden' && <Sunset className="w-3.5 h-3.5 text-[#C85A32]" />}
@@ -1265,7 +1347,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       </div>
 
       {/* Subtle Bottom-Right Navigation Micro-Hint (hidden when tour card occupies bottom in narrow view) */}
-      {inspectTarget === 'none' && !isTourPlaying && (
+      {inspectTarget === 'none' && viewMode !== 'split' && !isTourPlaying && (
         <div className="pointer-events-none hidden lg:flex absolute bottom-3 right-3 studio-glass rounded-full px-3 py-1 items-center gap-2.5 text-[11px] text-[#6B6860]">
           <span className="flex items-center gap-1">
             <Footprints className="w-3 h-3 text-[#C85A32]" />
