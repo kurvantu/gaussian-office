@@ -1,4 +1,5 @@
 import { FloorplanData } from '../types/floorplan';
+import { OFFICE } from './office';
 
 export const NORDIC_RESIDENCE: FloorplanData = {
   id: 'nordic-residence',
@@ -515,6 +516,7 @@ export const KYOTO_PAVILION: FloorplanData = {
 };
 
 export const FLOORPLAN_PRESETS: FloorplanData[] = [
+  OFFICE,
   NORDIC_RESIDENCE,
   SOHO_LOFT,
   KYOTO_PAVILION,

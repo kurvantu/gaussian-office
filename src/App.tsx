@@ -11,7 +11,8 @@ import {
   WalkRequest,
   WallDisplayMode,
 } from './types/floorplan';
-import { cloneFloorplan, FLOORPLAN_PRESETS, NORDIC_RESIDENCE } from './data/presets';
+import { cloneFloorplan, FLOORPLAN_PRESETS } from './data/presets';
+import { OFFICE, OFFICE_VIEW } from './data/office';
 import { Floorplan2DEditor } from './components/Floorplan2DEditor';
 import { Scene3DViewport } from './components/Scene3DViewport';
 import { TourDock } from './components/TourDock';
@@ -27,9 +28,9 @@ import {
 } from 'lucide-react';
 
 export function App() {
-  const [presetId, setPresetId] = useState<string>(NORDIC_RESIDENCE.id);
+  const [presetId, setPresetId] = useState<string>(OFFICE.id);
   const [floorplan, setFloorplan] = useState<FloorplanData>(() =>
-    cloneFloorplan(NORDIC_RESIDENCE)
+    cloneFloorplan(OFFICE)
   );
   const [undoStack, setUndoStack] = useState<FloorplanData[]>([]);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
@@ -56,12 +57,12 @@ export function App() {
 
   // High-frequency 60fps synchronized state shared between Three.js & 2D Blueprint Canvas
   const liveSyncRef = useRef<LiveSyncState>({
-    guidePos: { ...NORDIC_RESIDENCE.guideStart },
-    guideYaw: NORDIC_RESIDENCE.guideStartYaw,
+    guidePos: { ...OFFICE.guideStart },
+    guideYaw: OFFICE.guideStartYaw,
     guideIsWalking: false,
     guidePath: [],
     guideDestination: null,
-    cameraPos: { x: 1.2, y: 10.2, z: 11.4 },
+    cameraPos: { ...OFFICE_VIEW.position },
     cameraYaw: Math.PI,
     cameraFovRad: 0.9,
   });
@@ -127,7 +128,7 @@ export function App() {
   }, []);
 
   const handleSelectPreset = (id: string) => {
-    const found = FLOORPLAN_PRESETS.find((p) => p.id === id) ?? NORDIC_RESIDENCE;
+    const found = FLOORPLAN_PRESETS.find((p) => p.id === id) ?? OFFICE;
     stopSpeech();
     setPresetId(found.id);
     setFloorplan(cloneFloorplan(found));

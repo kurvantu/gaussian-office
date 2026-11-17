@@ -23,6 +23,7 @@ export interface BuiltArchitecture {
   group: THREE.Group;
   walkableMeshes: THREE.Object3D[];
   tourMarkerMeshes: THREE.Object3D[];
+  setSurfacesVisible: (visible: boolean) => void;
   updateWallCutaway: (
     cameraPos: THREE.Vector3,
     targetPos: THREE.Vector3,
@@ -1000,6 +1001,9 @@ export function buildArchitecture(
     })
   );
 
+  // Hide the proxy building as a unit behind a capture, but never its tour markers.
+  const surfaces = group.children.slice();
+  let surfacesVisible = true;
   floorplan.tourStops.forEach((stop, index) => {
     const mg = new THREE.Group();
     mg.position.set(stop.guidePos.x, 0.008, stop.guidePos.z);
@@ -1066,6 +1070,11 @@ export function buildArchitecture(
     group,
     walkableMeshes,
     tourMarkerMeshes,
+    setSurfacesVisible: (visible) => {
+      if (visible === surfacesVisible) return;
+      surfacesVisible = visible;
+      for (const surface of surfaces) surface.visible = visible;
+    },
     updateWallCutaway,
     dispose: () => {
       group.traverse((obj) => {

@@ -14,6 +14,7 @@ import {
   WallOpening,
 } from '../types/floorplan';
 import { computePolygonArea, computePolygonCentroid } from '../data/presets';
+import { OFFICE } from '../data/office';
 import { getWallSolidSegments, pointToSegmentDistSq } from '../utils/pathfinding';
 import {
   Armchair,
@@ -1536,7 +1537,7 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
       <div className="pointer-events-none absolute top-3 left-3 flex items-center gap-2">
         <div className="studio-glass rounded-full px-3 py-1.5 flex items-center gap-2 text-xs font-medium text-[#1C1B19]">
           <span className="w-2 h-2 rounded-full bg-[#1C1B19]" />
-          <span>2D Floorplan Blueprint</span>
+          <span>{floorplan.id === OFFICE.id ? 'Office Navigation Plan' : '2D Floorplan Blueprint'}</span>
           <span className="hidden sm:inline font-mono-tech text-[11px] text-[#6B6860] border-l border-black/10 pl-2">
             {floorplan.rooms.reduce((acc, r) => acc + computePolygonArea(r.polygon), 0).toFixed(0)}{' '}
             m²

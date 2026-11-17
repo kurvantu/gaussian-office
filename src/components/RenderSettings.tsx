@@ -6,13 +6,14 @@ interface RenderSettingsProps {
   method: RenderMethod;
   quality: SplatQuality;
   counts: { architecture: number; guide: number };
+  office: boolean;
   ready: boolean;
   error: string | null;
   onMethodChange: (method: RenderMethod) => void;
   onQualityChange: (quality: SplatQuality) => void;
 }
 
-export function RenderSettings({ method, quality, counts, ready, error, onMethodChange, onQualityChange }: RenderSettingsProps) {
+export function RenderSettings({ method, quality, counts, office, ready, error, onMethodChange, onQualityChange }: RenderSettingsProps) {
   const [open, setOpen] = useState(false);
   const gaussian = method === 'gaussian';
   const count = counts.architecture + counts.guide;
@@ -37,7 +38,8 @@ export function RenderSettings({ method, quality, counts, ready, error, onMethod
       >
         {gaussian ? <CircleDot className="h-3.5 w-3.5" /> : <Box className="h-3.5 w-3.5" />}
         <span>{gaussian ? 'Spark.js / Gaussian' : 'Triangle preview'}</span>
-        {gaussian && <span className="font-mono-tech text-[10px] font-normal text-[#6B6860]">{ready ? `${(count / 1000).toFixed(0)}k` : 'preparing'}</span>}
+        {gaussian && <span className="font-mono-tech text-[10px] font-normal text-[#6B6860]">{ready ? `${(count / 1000).toFixed(0)}k` : office ? 'Loading office…' : 'preparing'}</span>}
+        {error && <span className="text-[10px] text-amber-800">Fallback</span>}
         <ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -56,7 +58,7 @@ export function RenderSettings({ method, quality, counts, ready, error, onMethod
             <div className="space-y-1" role="group" aria-label="Rendering method">
               {([
                 { value: 'gaussian', label: 'Gaussian splatting', detail: 'Spark.js anisotropic 3D Gaussians', icon: CircleDot },
-                { value: 'triangles', label: 'Triangle mesh', detail: 'Original Three.js rasterized preview', icon: Box },
+                { value: 'triangles', label: 'Triangle mesh', detail: office ? 'Navigation plan + original guide' : 'Original Three.js rasterized preview', icon: Box },
               ] as const).map((item) => (
                 <button
                   key={item.value}
@@ -74,17 +76,27 @@ export function RenderSettings({ method, quality, counts, ready, error, onMethod
 
             {gaussian && (
               <div className="mt-3 border-t border-black/10 pt-3">
-                <div className="mb-2 flex items-center justify-between text-[10px] text-[#6B6860]"><span className="font-semibold uppercase tracking-wider">Sampling Quality</span><span>Live, editable scene</span></div>
+                <div className="mb-2 flex items-center justify-between text-[10px] text-[#6B6860]"><span className="font-semibold uppercase tracking-wider">Sampling Quality</span><span>{office ? 'Office LOD + guide detail' : 'Live, editable scene'}</span></div>
                 <div className="grid grid-cols-2 gap-1 rounded-lg bg-black/5 p-1" role="group" aria-label="Gaussian sampling quality">
                   {(['balanced', 'fine'] as const).map((value) => (
                     <button key={value} onClick={() => onQualityChange(value)} aria-pressed={quality === value} className={`cursor-pointer rounded-md py-1.5 text-[11px] font-semibold capitalize transition ${quality === value ? 'bg-white text-[#1C1B19] shadow-sm' : 'text-[#6B6860] hover:text-[#1C1B19]'}`}>{value === 'fine' ? 'Fine detail' : 'Balanced'}</button>
                   ))}
                 </div>
                 <dl className="font-mono-tech mt-3 space-y-1 text-[10px] text-[#57534E]">
-                  <div className="flex justify-between"><dt>Architecture</dt><dd>{number.format(counts.architecture)} splats</dd></div>
+                  <div className="flex justify-between"><dt>{office ? 'Office (selected LOD)' : 'Architecture'}</dt><dd>{number.format(counts.architecture)} splats</dd></div>
                   <div className="flex justify-between"><dt>Articulated guide</dt><dd>{number.format(counts.guide)} splats</dd></div>
                 </dl>
-                <p className="mt-2 text-[10px] leading-relaxed text-[#6B6860]">Generated from the floorplan surfaces, with baked color and GPU-driven joints. This is not a photograph-trained capture. Navigation markers remain vector-sharp.</p>
+                <p className="mt-2 text-[10px] leading-relaxed text-[#6B6860]">
+                  {office ? (
+                    <>
+                      The office is a fixed SOG capture. Plan edits change navigation and the triangle preview, not the scan. Elena keeps her animated joints.
+                      <br />
+                      <a className="underline" href="https://superspl.at/scene/40c67340" target="_blank" rel="noreferrer">Capture by Hilo</a>
+                      {' · '}
+                      <a className="underline" href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>
+                    </>
+                  ) : 'Generated from the floorplan surfaces, with baked color and GPU-driven joints. This is not a photograph-trained capture. Navigation markers remain vector-sharp.'}
+                </p>
               </div>
             )}
             {error && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">{error}</p>}
