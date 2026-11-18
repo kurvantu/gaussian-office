@@ -15,7 +15,7 @@ import {
 } from '../types/floorplan';
 import { computePolygonArea, computePolygonCentroid } from '../data/presets';
 import { OFFICE } from '../data/office';
-import { getWallSolidSegments, pointToSegmentDistSq } from '../utils/pathfinding';
+import { getWallSolidSegments, pointInPolygon, pointToSegmentDistSq } from '../utils/pathfinding';
 import {
   Armchair,
   DoorOpen,
@@ -64,20 +64,6 @@ const FLOOR_MATERIAL_LABELS: { type: FloorMaterialType; label: string; swatch: s
   { type: 'tatami', label: 'Tatami', swatch: '#D8CFA8' },
   { type: 'concrete', label: 'Concrete', swatch: '#CBC9C3' },
 ];
-
-function pointInPolygon(pt: Point2D, poly: Point2D[]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i].x,
-      zi = poly[i].z;
-    const xj = poly[j].x,
-      zj = poly[j].z;
-    const intersect =
-      zi > pt.z !== zj > pt.z && pt.x < ((xj - xi) * (pt.z - zi)) / (zj - zi + 1e-9) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
 
 function snapCoord(v: number, step = 0.25): number {
   return Math.round(v / step) * step;
@@ -977,6 +963,21 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
         ctx.arc(wx(last.x), wz(last.z), 4.5, 0, Math.PI * 2);
         ctx.fillStyle = '#C85A32';
         ctx.fill();
+        ctx.restore();
+      }
+
+      // Extra people are markers only; the tour and floor-click target remain Elena.
+      for (const { label, position } of sync.extraHumans) {
+        ctx.save();
+        ctx.translate(wx(position.x), wz(position.z));
+        ctx.fillStyle = '#3d6757'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, st.compact ? 4 : 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        if (!st.compact) {
+          ctx.font = '600 10px "Plus Jakarta Sans", sans-serif';
+          const right = position.x >= sync.guidePos.x;
+          ctx.textAlign = right ? 'left' : 'right';
+          ctx.strokeText(label, right ? 6 : -6, 13); ctx.fillText(label, right ? 6 : -6, 13);
+        }
         ctx.restore();
       }
 

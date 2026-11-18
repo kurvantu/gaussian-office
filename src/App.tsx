@@ -15,6 +15,8 @@ import { cloneFloorplan, FLOORPLAN_PRESETS } from './data/presets';
 import { OFFICE, OFFICE_VIEW } from './data/office';
 import { Floorplan2DEditor } from './components/Floorplan2DEditor';
 import { Scene3DViewport } from './components/Scene3DViewport';
+import { HumanInsertMenu } from './components/HumanInsertMenu';
+import { emptyCast, type HumanCast } from './scene/humans/cast';
 import { TourDock } from './components/TourDock';
 import { GuideInspectorPanel } from './components/GuideInspectorPanel';
 import {
@@ -34,6 +36,15 @@ export function App() {
   );
   const [undoStack, setUndoStack] = useState<FloorplanData[]>([]);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
+
+  const humanCast = useRef<HumanCast | null>(null);
+  const [castState, setCastState] = useState(emptyCast);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   // Studio layout & viewport state
   const [viewMode, setViewMode] = useState<ViewMode>('split');
@@ -62,6 +73,7 @@ export function App() {
     guideIsWalking: false,
     guidePath: [],
     guideDestination: null,
+    extraHumans: [],
     cameraPos: { ...OFFICE_VIEW.position },
     cameraYaw: Math.PI,
     cameraFovRad: 0.9,
@@ -130,6 +142,8 @@ export function App() {
   const handleSelectPreset = (id: string) => {
     const found = FLOORPLAN_PRESETS.find((p) => p.id === id) ?? OFFICE;
     stopSpeech();
+    humanCast.current?.clear();
+    setNotice(null);
     setPresetId(found.id);
     setFloorplan(cloneFloorplan(found));
     setUndoStack([]);
@@ -416,15 +430,21 @@ export function App() {
                 }`}
               >
                 {m.icon}
-                <span className="hidden md:inline">{m.label}</span>
+                <span className="hidden lg:inline">{m.label}</span>
               </button>
             );
           })}
         </nav>
 
-        {/* Right: 3D Human Guide Inspector & Reset */}
+        {/* Right: insert additional people, inspect Elena, or reset */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <HumanInsertMenu key={presetId} cast={humanCast} state={castState} office={presetId === OFFICE.id}
+            onInserted={names => {
+              setNotice(`Inserted ${names.join(' and ')}.`);
+              setViewMode(mode => mode === '2d' ? 'split' : mode);
+            }} />
           <button
+            aria-label="Inspect Guide"
             onClick={handleToggleInspectGuide}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer border ${
               inspectTarget !== 'none'
@@ -452,6 +472,9 @@ export function App() {
         ref={workspaceRef}
         className="flex-1 relative flex flex-col lg:flex-row overflow-hidden"
       >
+        {(notice || castState.problem) && <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center px-4">
+          <span className="rounded-full bg-[#345447] px-3.5 py-2 text-xs font-semibold text-white shadow-lg">{castState.problem ? 'Humans paused · open Insert human to review' : notice}</span>
+        </div>}
         {/* 2D Architectural Blueprint Editor Pane (shown in '2d' and 'split' modes) */}
         {(viewMode === '2d' || viewMode === 'split') && (
           <section
@@ -499,6 +522,8 @@ export function App() {
           }`}
         >
           <Scene3DViewport
+            castRef={humanCast}
+            onCastChange={setCastState}
             floorplan={floorplan}
             viewMode={viewMode}
             wallMode={wallMode}

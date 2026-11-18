@@ -2,7 +2,7 @@
 
 A **model** is a supplied rigged asset; an **actor** is one instance of that model; a **take** is a JSON file that tells the actors where to stand and what to do. Two actors may share a model without sharing a pose or a clock.
 
-**To write a take:** copy Prompt A as the system instruction, then send the shot card below as the user message. Save a successful response as `take.json`. **To make it playable:** give Prompt B to a coding agent in this repository. PlanWalk currently animates Elena; it does **not** yet import these GLBs or play this proposed format. Neither prompt requires replacing Elena or modifying `data/sog/office.sog`.
+**To write a take:** copy Prompt A as the system instruction, then send the shot card below as the user message. Save a successful response as `take.json`. **To play it:** in Office Dining Hall open **Insert human**, choose the library visitor or the matching local GLBs, then **Motion JSON → Open JSON → Insert into scene**. You can also paste the JSON. Bad takes do not replace the current cast. If a plan edit changes a route, the actors restart at their marks; if a mark is blocked, playback pauses until the plan is fixed or the affected person removed. Reopen the menu to play/pause or replay. Prompt B is the original implementation brief; Elena and `data/sog/office.sog` remain independent.
 
 [Manifest schema](human-motion-v1.schema.json) · [Complete two-actor take](human-motion-v1.example.json)
 
@@ -40,7 +40,7 @@ Same input, but ask Fern to walk to office-aisle instead:
 
 ### Shot card (user message)
 
-Replace the inventory, marks and direction with your own. Get clip and bone names from the export, not from a guess about the rig. The following **fictional** inventory yields the [worked take](human-motion-v1.example.json); neither GLB is bundled.
+Replace the inventory, marks and direction with your own. Get clip and bone names from the export, not from a guess about the rig. This inventory yields the [worked take](human-motion-v1.example.json). The menu’s original `Visitor.glb` supports Ada’s listed clips; `Host.glb` remains an illustrative asset to supply yourself. To run Ada alone, use **Motion JSON → Use Ada’s sample take** with **Studio library** selected.
 
 ```text
 Inventory (metres, Y up, +Z forward, feet at origin):
@@ -74,5 +74,7 @@ npx --yes --package=ajv-cli@5.0.0 ajv validate --spec=draft2020 -s docs/prompts/
 ```
 
 The schema cannot verify GLB contents, cross-references, ordered key times or collision. Those are importer checks. **Production prompt evaluation is pending:** no production LLM snapshot or temperature was specified. Pin both before sign-off. Run the worked shot card, the missing-gait case, an unknown joint, an unnamed floor mark and a request for three extras five times each at the deployment settings. Require 5/5 parseable responses per case: a schema-valid take matching the worked blocking for the first, and `needsInput` with the relevant question for the others. Compare parsed data, not whitespace.
+
+**v1 viewer update · 2026-11-17** — Added playback instructions for the Insert human menu and its bundled visitor. No change to the schema or authoring prompt.
 
 **v1 · 2026-11-17** — Initial GLB cast, sequential locomotion/clip/joint actions, clarification response and player implementation brief. Changing units or step semantics requires a new format version.

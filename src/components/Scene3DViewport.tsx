@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { SparkRenderer, type SplatMesh } from '@sparkjsdev/spark';
+import { isMobile, SparkRenderer, type SplatMesh } from '@sparkjsdev/spark';
 import { OFFICE, OFFICE_VIEW } from '../data/office';
 import { loadOfficeEnvironment, officeLodBudget } from '../scene/officeEnvironment';
 import {
@@ -19,6 +19,7 @@ import {
 import { createFloorMaterialCache } from '../scene/textures';
 import { buildArchitecture, BuiltArchitecture } from '../scene/buildArchitecture';
 import { createHumanGuide, HumanGuideController } from '../scene/createHumanGuide';
+import { HumanCast, type CastState } from '../scene/humans/cast';
 import { NavGrid } from '../utils/pathfinding';
 import {
   createGaussianRepresentation,
@@ -39,6 +40,8 @@ import {
 } from 'lucide-react';
 
 interface Scene3DViewportProps {
+  castRef: React.RefObject<HumanCast | null>;
+  onCastChange: (state: CastState) => void;
   floorplan: FloorplanData;
   viewMode: ViewMode;
   wallMode: WallDisplayMode;
@@ -66,6 +69,7 @@ function angleLerp(current: number, target: number, t: number): number {
 }
 
 export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
+  castRef, onCastChange,
   floorplan,
   viewMode,
   wallMode,
@@ -145,6 +149,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     gaussianGuide: GaussianRepresentation | null;
     controls: OrbitControls;
     guide: HumanGuideController;
+    humanCast: HumanCast;
     guideLight: THREE.PointLight;
     sunLight: THREE.DirectionalLight;
     hemiLight: THREE.HemisphereLight;
@@ -275,6 +280,9 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     guide.root.rotation.y = floorplan.guideStartYaw;
     guide.triggerWave(3.2);
     scene.add(guide.root);
+    const humanCast = new HumanCast(guide.root, isMobile(), onCastChange);
+    scene.add(humanCast.group);
+    castRef.current = humanCast;
 
     // 3D walking path line + destination ring + floor hover cursor
     const pathGeo = new THREE.BufferGeometry().setFromPoints([
@@ -382,6 +390,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       gaussianArchitecture: null,
       gaussianGuide: null,
       controls,
+      humanCast,
       guide,
       guideLight,
       sunLight,
@@ -907,6 +916,8 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       // 4. Push 60fps synchronized Guide + Camera telemetry to 2D Floorplan blueprint!
       eng.camera.getWorldDirection(tempCamForward);
       const sync = liveSyncRef.current;
+      humanCast.update(frameDelta, eng.camera.position);
+      sync.extraHumans = humanCast.markers;
       sync.guidePos.x = eng.guide.root.position.x;
       sync.guidePos.z = eng.guide.root.position.z;
       sync.guideYaw = eng.guide.root.rotation.y;
@@ -975,6 +986,8 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       engineRef.current?.gaussianArchitecture?.dispose();
       engineRef.current?.gaussianGuide?.dispose();
       engineRef.current?.arch?.dispose();
+      humanCast.clear();
+      castRef.current = null;
       spark?.dispose();
       guide.dispose();
       floorCache.dispose();
@@ -1011,6 +1024,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     eng.scene.add(built.group);
     eng.arch = built;
     eng.navGrid = new NavGrid(floorplan);
+    eng.humanCast.setNavigation(floorplan, eng.navGrid);
     if (architectureQuality === null) {
       // Only the interior floor is pickable, not the triangle preview's garden / plinth.
       built.walkableMeshes = built.walkableMeshes.filter((mesh) => mesh.userData.roomId);
