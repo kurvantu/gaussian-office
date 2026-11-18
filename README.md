@@ -23,9 +23,15 @@ Open the URL printed by Vite (usually `http://localhost:5173`). The app opens in
 - **2D Plan / Split:** the office plan is a hand-aligned approximation for picking, collision and routing. Editing a wall or moving a table changes that plan and its **Triangle mesh** preview; it does **not** move captured furniture or repaint the SOG.
 - **Spark.js / Gaussian:** see the office and guide splat counts, choose Balanced or Fine detail, or switch to the triangle preview. Wall cutaways apply to the mesh preview, not the scan. The other floorplan presets still generate their own editable 3D architecture.
 
-## Author additional actors
+## Insert a human
 
-The [human motion prompt pack (v1)](docs/prompts/human-motion-v1.md) turns a GLB inventory and blocking notes into a JSON take. It includes a schema, a two-character example and a coding-agent prompt for building the player. This is an authoring spec; the current viewer does not import these takes yet.
+1. Open **Insert human** in the header (the person-plus icon on small screens).
+2. Choose **Studio library → Insert into scene** to try the included visitor, or **Local GLB** to choose your own self-contained model (up to 8 MiB). Files stay in the browser. No motion JSON is required.
+3. Look beside Elena: the new person stands on open floor, with a green marker on the plan. To stage someone in a different area, walk Elena there before inserting. Extras are ordinary or skinned meshes in **both** render modes; they do not replace the guide or change the scan.
+
+**Animate Ada:** in the Office Dining Hall, choose **Studio library → Motion JSON → Use Ada’s sample take → Insert into scene**. Ada walks from the aisle to the window seating, turns, then waves. To use your own blocking, paste a `planwalk.humans.v1` take or choose **Open JSON**; select the GLBs named in it, matching case. The [authoring guide, schema and two-person example](docs/prompts/human-motion-v1.md) describe the format. For the two-model example use **Local GLB** and select both [`Visitor.glb`](data/humans/Visitor.glb) and your own `Host.glb`.
+
+Reopen the menu to **pause, replay or remove** extras. Insertion is additive, up to **two people besides Elena**. Resetting, switching presets or reloading clears the extras. A rejected import leaves the existing people in place. Check the [model handoff limits](RENDERING.md#additional-human-models) before exporting a GLB.
 
 ## Build and verify
 
@@ -35,7 +41,7 @@ npm run build
 npm run preview
 ```
 
-Serve the **whole `dist/` directory over HTTP(S)**. Vite inlines the application code but emits the office as a separate, hashed `.sog` file beside `index.html`. Deploying just the HTML will give you the navigation model instead of the capture. If **Triangle preview · Fallback** appears, open rendering settings for the error and check that the `.sog` request returns the binary, not a 404 or an HTML page.
+Serve the **whole `dist/` directory over HTTP(S)**. Vite inlines the application code but emits the office `.sog` and library visitor `.glb` as separate, hashed files beside `index.html`. Deploying just the HTML omits both assets. If **Triangle preview · Fallback** appears, open rendering settings for the error and check that the `.sog` request returns the binary, not a 404 or an HTML page.
 
 To run the browser checks:
 

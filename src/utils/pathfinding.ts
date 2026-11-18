@@ -1,5 +1,19 @@
 import { FloorplanData, Point2D, Wall, WallOpening } from '../types/floorplan';
 
+export function pointInPolygon(pt: Point2D, poly: Point2D[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x,
+      zi = poly[i].z;
+    const xj = poly[j].x,
+      zj = poly[j].z;
+    const intersect =
+      zi > pt.z !== zj > pt.z && pt.x < ((xj - xi) * (pt.z - zi)) / (zj - zi + 1e-9) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 export interface WallSegment2D {
   ax: number;
   az: number;
@@ -180,6 +194,14 @@ export class NavGrid {
   private isCellBlocked(c: number, r: number): boolean {
     if (c < 0 || r < 0 || c >= this.cols || r >= this.rows) return true;
     return this.blocked[r * this.cols + c] === 1;
+  }
+
+  /** Exact cell occupancy for placement; unlike guide navigation this never snaps. */
+  public isWalkable(point: Point2D): boolean {
+    const { x, z } = point;
+    if (!(x >= this.minX && x < this.maxX && z >= this.minZ && z < this.maxZ)) return false;
+    const { c, r } = this.worldToCell(x, z);
+    return !this.isCellBlocked(c, r);
   }
 
   private findNearestFreeCell(c0: number, r0: number): { c: number; r: number } {

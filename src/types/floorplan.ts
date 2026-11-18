@@ -141,6 +141,7 @@ export interface SelectionState {
 
 /** Shared high-frequency mutable state updated at 60fps by 3D engine & read by 2D canvas */
 export interface LiveSyncState {
+  extraHumans: { label: string; position: Point2D }[];
   guidePos: Point2D;
   guideYaw: number;
   guideIsWalking: boolean;
