@@ -23,6 +23,10 @@ Open the URL printed by Vite (usually `http://localhost:5173`). The app opens in
 - **2D Plan / Split:** the office plan is a hand-aligned approximation for picking, collision and routing. Editing a wall or moving a table changes that plan and its **Triangle mesh** preview; it does **not** move captured furniture or repaint the SOG.
 - **Spark.js / Gaussian:** see the office and guide splat counts, choose Balanced or Fine detail, or switch to the triangle preview. Wall cutaways apply to the mesh preview, not the scan. The other floorplan presets still generate their own editable 3D architecture.
 
+## Author additional actors
+
+The [human motion prompt pack (v1)](docs/prompts/human-motion-v1.md) turns a GLB inventory and blocking notes into a JSON take. It includes a schema, a two-character example and a coding-agent prompt for building the player. This is an authoring spec; the current viewer does not import these takes yet.
+
 ## Build and verify
 
 ```sh

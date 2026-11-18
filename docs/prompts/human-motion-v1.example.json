@@ -1,0 +1,31 @@
+{
+  "format": "planwalk.humans.v1",
+  "preset": "office",
+  "models": {
+    "visitor": { "file": "Visitor.glb", "idleClip": "Relaxed", "walkClip": "Stroll_IP", "walkRefMps": 1.4 },
+    "host": { "file": "Host.glb", "idleClip": "AtEase" }
+  },
+  "actors": [
+    {
+      "id": "ada", "model": "visitor",
+      "spawn": { "x": 0.5, "z": -0.6, "yawDeg": -90 },
+      "steps": [
+        { "op": "walkTo", "x": -4.4, "z": -2.82, "speedMps": 1.2 },
+        { "op": "turnTo", "yawDeg": 90, "durationSec": 0.6 },
+        { "op": "play", "clip": "WaveOnce" }
+      ]
+    },
+    {
+      "id": "lin", "model": "host",
+      "spawn": { "x": 4, "z": 2, "yawDeg": 180 },
+      "steps": [
+        { "op": "wait", "durationSec": 1 },
+        { "op": "pose", "bone": "Wrist_R", "keys": [
+          { "tSec": 0, "xyzDeg": [0, 0, 0] },
+          { "tSec": 0.3, "xyzDeg": [0, 0, 15] },
+          { "tSec": 0.6, "xyzDeg": [0, 0, 0] }
+        ] }
+      ]
+    }
+  ]
+}
