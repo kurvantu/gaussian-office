@@ -1,20 +1,21 @@
 import * as T from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { buildDetailLods, fitSkinPalettes, TRIANGLES, type GeometryLods } from './detail';
+import { planImages, useImageBudget, type EmbeddedMaps } from './imageBudget';
+import { library } from './library';
 
 export const MAX_GLB_BYTES = 8 * 1024 * 1024;
-const TRIANGLES = [20_000, 10_000, 5_000, 2_000];
 export interface HumanModel {
   scene: T.Group;
   animations: T.AnimationClip[];
+  generatedLods?: GeometryLods;
 }
 
-interface Envelope {
+interface Envelope extends EmbeddedMaps {
   asset?: { version: string };
-  scenes?: unknown[];
-  nodes?: { children?: number[] }[];
-  textures?: unknown[];
+  scenes?: { nodes?: number[] }[];
+  nodes?: { name?: string; children?: number[]; mesh?: number; skin?: number }[];
   buffers?: { uri?: string }[];
-  images?: { uri?: string; bufferView?: number; mimeType?: string }[];
   accessors?: { count: number; bufferView?: number; sparse?: unknown }[];
   materials?: { alphaMode?: string }[];
   cameras?: unknown[];
@@ -23,7 +24,7 @@ interface Envelope {
 }
 
 // Check the envelope BEFORE GLTFLoader can resolve a URL or allocate attribute arrays.
-function checkEnvelope(bytes: ArrayBuffer) {
+function checkEnvelope(bytes: ArrayBuffer, file: string, mobile: boolean) {
   const view = new DataView(bytes);
   if (
     bytes.byteLength < 28 ||
@@ -59,13 +60,15 @@ function checkEnvelope(bytes: ArrayBuffer) {
   ) {
     throw new Error('Embed buffers and images in the GLB. External resources are not allowed.');
   }
+  const binStart = 28 + view.getUint32(12, true);
   if (
-    (doc.images?.length ?? 0) > 2 ||
-    (doc.textures?.length ?? 0) > 2 ||
-    doc.images?.some((img) => !['image/png', 'image/jpeg'].includes(img.mimeType ?? ''))
+    binStart > bytes.byteLength ||
+    view.getUint32(binStart - 4, true) !== 0x004e4942 ||
+    view.getUint32(binStart - 8, true) !== bytes.byteLength - binStart
   ) {
-    throw new Error('Use at most two embedded PNG or JPEG maps, each at most 1024 × 1024.');
+    throw new Error('Invalid binary GLB chunk.');
   }
+  const images = planImages(bytes, binStart, doc, mobile);
   const extension = doc.extensionsUsed?.find(
     (name) => !['KHR_materials_unlit', 'KHR_texture_transform', 'KHR_mesh_quantization'].includes(name)
   );
@@ -92,6 +95,33 @@ function checkEnvelope(bytes: ArrayBuffer) {
       if (Object.keys(p.attributes).some((k) => /^(JOINTS|WEIGHTS)_[1-9]/.test(k)))
         throw new Error('Limit skinning to four weights per vertex.');
     }
+  // The supplied Blender scene contains two coincident full people. Select the dressed
+  // armature, not the separate black humanBody reference, BEFORE GLTFLoader decodes it.
+  // Never discard arbitrary secondary roots from other imported scenes.
+  const roots = doc.scenes[0].nodes ?? [];
+  let displayRoot: number | undefined;
+  if (file === library.visitor.file && roots.length === 2) {
+    const reference = roots.find((i) => nodes[i]?.name === 'Sketchfab_model.001');
+    if (reference !== undefined) {
+      const parts: number[] = [];
+      const seen = new Set<number>();
+      const collect = (i: number) => {
+        if (seen.has(i)) return;
+        seen.add(i);
+        if (nodes[i].mesh !== undefined) parts.push(i);
+        nodes[i].children?.forEach(collect);
+      };
+      collect(reference);
+      if (
+        parts.length === 1 &&
+        nodes[parts[0]].name === 'humanBody_0' &&
+        nodes[parts[0]].skin === undefined
+      ) {
+        displayRoot = roots.find((i) => nodes[i]?.name === 'Sketchfab_model');
+      }
+    }
+  }
+  return { images, displayRoot };
 }
 
 /** Each LOD may be a named mesh or a parent of its primitives. */
@@ -113,11 +143,15 @@ export function meshLevels(scene: T.Object3D): T.Mesh[][] {
   });
   if (levels.every((l) => l.length === 0) && plain.length) return [plain];
   if (plain.length || levels.some((l) => l.length === 0))
-    throw new Error('Supply meshes under all four LOD0–LOD3 nodes, or one low-poly model.');
+    throw new Error(
+      'Supply meshes under all four LOD0–LOD3 nodes, or leave the source meshes unlabelled to generate LODs.'
+    );
   return levels;
 }
 
-function checkSurface(mesh: T.Mesh) {
+class TopologyError extends Error {}
+
+function checkSurface(mesh: T.Mesh, joinSeams = true) {
   const g = mesh.geometry,
     pos = g.getAttribute('position'),
     index = g.index;
@@ -146,7 +180,7 @@ function checkSurface(mesh: T.Mesh) {
   for (let i = 0; i < pos.count; i++) {
     const xyz = [pos.getX(i), pos.getY(i), pos.getZ(i)];
     if (!xyz.every(Number.isFinite)) throw new Error('Mesh contains a non-finite position.');
-    const key = xyz.join(',');
+    const key = joinSeams ? xyz.join(',') : String(i);
     if (!unique.has(key)) unique.set(key, unique.size);
     weld.push(unique.get(key)!);
   }
@@ -193,8 +227,8 @@ function checkSurface(mesh: T.Mesh) {
         edges.set(key, h);
         continue;
       }
-      if (twin < 0) throw new Error('Mesh contains a non-manifold edge.');
-      if (vertices[twin] === u) throw new Error('Adjacent triangles have inconsistent winding.');
+      if (twin < 0) throw new TopologyError('Mesh contains a non-manifold edge.');
+      if (vertices[twin] === u) throw new TopologyError('Adjacent triangles have inconsistent winding.');
       parents[fan(h)] = fan(next(twin));
       parents[fan(next(h))] = fan(twin);
       edges.set(key, -1);
@@ -204,16 +238,15 @@ function checkSurface(mesh: T.Mesh) {
   for (let i = 0; i < n; i++) {
     const v = vertices[i],
       f = fan(i);
-    if (firstFan[v] >= 0 && firstFan[v] !== f) throw new Error('Mesh contains a non-manifold vertex.');
+    if (firstFan[v] >= 0 && firstFan[v] !== f)
+      throw new TopologyError('Mesh contains a non-manifold vertex.');
     firstFan[v] = f;
   }
 }
 
-function inspect(model: HumanModel) {
+async function inspect(model: HumanModel, signal: AbortSignal) {
   const levels = meshLevels(model.scene);
-  const bones = new Set<T.Bone>();
   model.scene.traverse((node) => {
-    if (node instanceof T.Bone) bones.add(node);
     if (
       node instanceof T.Light ||
       node instanceof T.Camera ||
@@ -224,23 +257,33 @@ function inspect(model: HumanModel) {
       throw new Error('Only ordinary or skinned triangle meshes may be inserted.');
     }
   });
-  if (bones.size > 64) throw new Error('A human rig may have at most 64 bones.');
+  let generate = false;
   for (const [i, meshes] of levels.entries()) {
-    const limit = levels.length === 1 ? TRIANGLES[3] : TRIANGLES[i];
+    const plain = levels.length === 1;
+    const limit = plain ? 32_000 : TRIANGLES[i];
     const tris = meshes.reduce(
-      (sum, m) => sum + (m.geometry.index ?? m.geometry.attributes.position).count / 3,
+      (n, m) => n + (m.geometry.index ?? m.geometry.attributes.position).count / 3,
       0
     );
     if (tris > limit)
       throw new Error(
-        levels.length === 1
-          ? 'Above 2,000 triangles: supply LOD0–LOD3.'
-          : `LOD${i} exceeds ${limit.toLocaleString()} triangles.`
+        `${plain ? 'Single-level source' : `LOD${i}`} exceeds ${limit.toLocaleString()} triangles.`
       );
-    if (meshes.length > 2 || meshes.some((m) => Array.isArray(m.material)))
-      throw new Error('Allow at most two visible primitives per LOD.');
-    meshes.forEach(checkSurface);
+    if (meshes.length > 12 || meshes.some((m) => Array.isArray(m.material)))
+      throw new Error('Allow at most 12 visible primitives per LOD.');
+    for (const m of meshes) {
+      try {
+        checkSurface(m);
+      } catch (e) {
+        // UV seam welding repairs split fans, but coincident indexed sheets (e.g. hair)
+        // are not necessarily joined. Require manifold topology in one interpretation.
+        if (!(e instanceof TopologyError) || !m.geometry.index) throw e;
+        checkSurface(m, false);
+      }
+    }
+    generate ||= plain && tris > TRIANGLES[3];
   }
+  fitSkinPalettes(levels.flat());
   model.scene.updateMatrixWorld(true);
   const box = new T.Box3().setFromObject(model.scene, true);
   const height = box.max.y - box.min.y;
@@ -256,11 +299,16 @@ function inspect(model: HumanModel) {
       'Export in metres, Y up, 0.6–2.5 m tall, with the origin between the feet (floor Y = 0 ± 8 cm).'
     );
   }
+  if (generate) {
+    model.generatedLods = new Map();
+    await buildDetailLods(levels[0], model.generatedLods, signal);
+  }
 }
 
 /** Own only imported assets. Mesh instances share these resources until the last user is gone. */
 export function disposeModel(model: HumanModel) {
   const resources = new Set<T.Material | T.BufferGeometry | T.Texture | T.Skeleton>();
+  model.generatedLods?.forEach((levels) => levels.forEach((g) => resources.add(g)));
   const images = new Set<ImageBitmap>();
   model.scene.traverse((node) => {
     if (!(node instanceof T.Mesh)) return;
@@ -279,7 +327,7 @@ export function disposeModel(model: HumanModel) {
   images.forEach((img) => img.close());
 }
 
-export async function loadModel(file: File, signal: AbortSignal): Promise<HumanModel> {
+export async function loadModel(file: File, signal: AbortSignal, mobile = false): Promise<HumanModel> {
   if (!/\.glb$/i.test(file.name) || file.size > MAX_GLB_BYTES)
     throw new Error(`${file.name}: choose a .glb of at most 8 MiB.`);
   const urls = new Set<string>();
@@ -288,7 +336,7 @@ export async function loadModel(file: File, signal: AbortSignal): Promise<HumanM
   try {
     const bytes = await file.arrayBuffer();
     signal.throwIfAborted();
-    checkEnvelope(bytes);
+    const { images, displayRoot } = checkEnvelope(bytes, file.name, mobile);
     const manager = new T.LoadingManager();
     manager.setURLModifier((url) => {
       if (!url.startsWith('blob:')) throw new Error('External resources are not allowed.');
@@ -298,11 +346,22 @@ export async function loadModel(file: File, signal: AbortSignal): Promise<HumanM
     manager.onError = () => {
       imageError = true;
     };
-    const gltf = await new GLTFLoader(manager).parseAsync(bytes, '');
+    const loader = new GLTFLoader(manager);
+    useImageBudget(loader, images);
+    if (displayRoot !== undefined)
+      loader.register((parser) => ({
+        name: 'PlanWalkVisitorRoot',
+        beforeRoot() {
+          parser.json.scenes[0].nodes = [displayRoot];
+          return null;
+        },
+      }));
+    const gltf = await loader.parseAsync(bytes, '');
     model = { scene: gltf.scene, animations: gltf.animations };
     signal.throwIfAborted();
     if (imageError) throw new Error('Could not decode an embedded texture.');
-    inspect(model);
+    await inspect(model, signal);
+    signal.throwIfAborted();
     return model;
   } catch (error) {
     if (model) disposeModel(model);

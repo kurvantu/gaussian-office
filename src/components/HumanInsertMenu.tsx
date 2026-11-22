@@ -18,7 +18,9 @@ import {
 import type { CastState, HumanCast } from '../scene/humans/cast';
 import { MAX_ACTORS, MAX_JSON_CHARS } from '../scene/humans/take';
 import example from '../../docs/prompts/human-motion-v1.example.json';
-import visitorPortrait from '../assets/visitor-preview.webp';
+import { library, type LibraryId } from '../scene/humans/library';
+import animatedPortrait from '../assets/visitor-preview.webp';
+import detailedPortrait from '../assets/detailed-visitor.webp';
 
 interface Props {
   cast: RefObject<HumanCast | null>;
@@ -60,7 +62,8 @@ export function HumanInsertMenu(props: Props) {
 function LibraryDialog({ cast, state, office, onInserted, close }: Props & { close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const active = useRef(true);
-  const [source, setSource] = useState<'visitor' | 'file'>('visitor');
+  const [source, setSource] = useState<'library' | 'file'>('library');
+  const [libraryId, setLibraryId] = useState<LibraryId>('visitor');
   const [files, setFiles] = useState<File[]>([]);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -88,7 +91,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     setBusy(true);
     setError('');
     try {
-      const names = await cast.current.insert(source === 'visitor' ? 'visitor' : files, text);
+      const names = await cast.current.insert(source === 'library' ? libraryId : files, text);
       if (active.current) {
         onInserted(names);
         dismiss();
@@ -118,6 +121,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     }
   };
   const fillSample = () => {
+    setLibraryId('animated'); // Ada names the clips embedded in Visitor.glb.
     setText(
       JSON.stringify(
         { ...example, models: { visitor: example.models.visitor }, actors: [example.actors[0]] },
@@ -166,7 +170,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
           <div className="mb-3 flex rounded-xl border border-black/[.06] bg-[#efeee9] p-1">
             {(
               [
-                { id: 'visitor', name: 'Studio library', Icon: Library },
+                { id: 'library', name: 'Studio library', Icon: Library },
                 { id: 'file', name: 'Local GLB', Icon: FolderOpen },
               ] as const
             ).map(({ id, name, Icon }) => (
@@ -184,19 +188,40 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
               </button>
             ))}
           </div>
-          {source === 'visitor' ? (
+          {source === 'library' ? (
             <div className="flex items-stretch overflow-hidden rounded-xl border border-[#d6dfd9] bg-[#f1f5f1]">
               <div className="flex w-24 shrink-0 items-end justify-center bg-[#dbe6df]">
-                <img src={visitorPortrait} alt="" className="h-26 w-full object-cover" />
+                <img
+                  src={libraryId === 'visitor' ? detailedPortrait : animatedPortrait}
+                  alt=""
+                  className="h-26 w-full object-cover"
+                />
               </div>
               <div className="min-w-0 flex-1 px-3.5 py-3">
                 <span className="font-mono-tech text-[9px] uppercase tracking-widest text-[#4b6758]">
                   Included model
                 </span>
-                <p className="text-sm font-bold">Studio visitor</p>
+                <select
+                  aria-label="Library model"
+                  value={libraryId}
+                  onChange={(e) => {
+                    setLibraryId(e.target.value as LibraryId);
+                    setError('');
+                  }}
+                  className="block max-w-full cursor-pointer rounded-sm text-sm font-bold text-[#354f45]"
+                >
+                  {Object.entries(library).map(([id, entry]) => (
+                    <option key={id} value={id}>
+                      {entry.title}
+                    </option>
+                  ))}
+                </select>
                 <p className="mt-1 text-[11px] leading-relaxed text-[#585e55]">
-                  Rigged figure · 1.76 m<br />
-                  Idle, walk and wave clips
+                  {library[libraryId].file}
+                  <br />
+                  {libraryId === 'visitor'
+                    ? '1.86 m · Rest pose · No clips'
+                    : '1.76 m · Idle, walk and wave clips'}
                 </p>
               </div>
               <Check size={15} aria-label="Selected" className="m-3 shrink-0 text-[#416054]" />
@@ -222,7 +247,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                 }}
               />
               <span className="mt-1 block text-[10px] text-[#5d625a]">
-                Feet at origin in metres · ≤2k triangles or LOD0–3
+                Feet at origin in metres · ≤32k triangles or authored LOD0–3
               </span>
             </label>
           )}
@@ -271,8 +296,12 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                     }}
                   />
                 </label>
-                {source === 'visitor' && (
-                  <button className={smallButton} onClick={fillSample}>
+                {source === 'library' && (
+                  <button
+                    className={smallButton}
+                    onClick={fillSample}
+                    title="Select the animated visitor and load Ada’s take"
+                  >
                     Use Ada’s sample take
                   </button>
                 )}
