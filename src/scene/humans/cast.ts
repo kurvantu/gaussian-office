@@ -1,5 +1,5 @@
 import * as T from 'three';
-import visitorUrl from '../../../data/humans/Visitor.glb?url&no-inline';
+import { library, type LibraryId } from './library';
 import type { FloorplanData, Point2D } from '../../types/floorplan';
 import type { NavGrid } from '../../utils/pathfinding';
 import { HumanActor } from './actor';
@@ -12,13 +12,14 @@ export interface CastState {
   problem: string | null;
 }
 export const emptyCast: CastState = { people: [], paused: false, problem: null };
-export type ModelSource = 'visitor' | File[];
+export type ModelSource = LibraryId | File[];
 
 /** Viewport-owned session; nothing here owns or animates the guide, architecture or capture. */
 export class HumanCast {
   readonly group = new T.Group();
   markers: { label: string; position: Point2D }[] = [];
   private actors: HumanActor[] = [];
+  private readonly shelfOrigins = new WeakMap<HumanModel, LibraryId>();
   private nav?: Navigation;
   private pending?: AbortController;
   private paused = false;
@@ -78,7 +79,8 @@ export class HumanCast {
       const take = text.trim() ? readTake(text) : null;
       if (take && this.nav.plan.id !== 'office')
         throw new Error('v1 motion takes use the Office Dining Hall floorplan.');
-      const names = source === 'visitor' ? ['Visitor.glb'] : source.map((f) => f.name);
+      const shelf = typeof source === 'string' ? library[source] : null;
+      const names = Array.isArray(source) ? source.map((f) => f.name) : [library[source].file];
       if (!names.length) throw new Error('Choose a local .glb model first.');
       if (names.length > 2 || new Set(names).size !== names.length)
         throw new Error('Choose up to two uniquely named GLB files.');
@@ -87,10 +89,7 @@ export class HumanCast {
       const assets = new Map<string, ModelSpec>(
         take
           ? Object.entries(take.models)
-          : names.map((file, i) => [
-              `model-${i}`,
-              { file, idleClip: source === 'visitor' ? 'Relaxed' : undefined },
-            ])
+          : names.map((file, i) => [`model-${i}`, { file, idleClip: shelf?.idleClip }])
       );
       const usedFiles = new Set(Array.from(assets.values(), (m) => m.file));
       for (const name of usedFiles)
@@ -102,15 +101,23 @@ export class HumanCast {
         if (taken.has(a.id)) throw new Error(`actors: “${a.id}” is already in the scene.`);
 
       // The shelf entry is a first-party Vite asset. User-selected GLBs never leave the browser.
-      let files: File[];
-      if (source === 'visitor') {
-        const response = await fetch(visitorUrl, { signal });
-        if (!response.ok) throw new Error(`Could not load the studio visitor (HTTP ${response.status}).`);
-        files = [new File([await response.blob()], names[0])];
-      } else files = source;
-      for (const file of files) {
-        signal.throwIfAborted();
-        models.set(file.name, await loadModel(file, signal));
+      if (Array.isArray(source)) {
+        for (const file of source) {
+          signal.throwIfAborted();
+          models.set(file.name, await loadModel(file, signal, this.mobile));
+        }
+      } else {
+        const entry = library[source];
+        // Share prepared textures and index buffers only from a still-live shelf instance,
+        // never from a user upload which happens to have the same basename.
+        let model = this.actors.find((a) => this.shelfOrigins.get(a.model) === source)?.model;
+        if (!model) {
+          const response = await fetch(entry.url, { signal });
+          if (!response.ok) throw new Error(`Could not load ${entry.file} (HTTP ${response.status}).`);
+          model = await loadModel(new File([await response.blob()], entry.file), signal, this.mobile);
+          this.shelfOrigins.set(model, source);
+        }
+        models.set(entry.file, model);
       }
       signal.throwIfAborted();
 
@@ -125,7 +132,7 @@ export class HumanCast {
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/-$/, '')
             .slice(0, 26);
-          if (!/^[a-z]/.test(stem) || stem === 'elena') stem = 'visitor';
+          if (source === 'visitor' || !/^[a-z]/.test(stem) || stem === 'elena') stem = 'visitor';
           let id = stem,
             n = 1;
           while (taken.has(id)) id = `${stem}-${++n}`;

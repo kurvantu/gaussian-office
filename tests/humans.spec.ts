@@ -25,7 +25,7 @@ async function people(page: Page) {
       actors: e.humanCast.group.children.map((root: any) => {
         const meshes: string[] = [];
         root.traverseVisible((m: any) => {
-          if (m.isSkinnedMesh) meshes.push(m.name);
+          if (m.isMesh) meshes.push(m.name);
         });
         return { uuid: root.uuid, id: root.name, meshes, pos: root.position.toArray() };
       }),
@@ -46,7 +46,7 @@ test('insert a studio visitor and a local GLB without replacing the guide or the
   page.on('requestfinished', (r) => {
     if (r.resourceType() !== 'fetch') return;
     if (new URL(r.url()).pathname.endsWith('/office.sog')) downloads++;
-    if (new URL(r.url()).pathname.endsWith('/Visitor.glb')) libraryFetches++;
+    if (new URL(r.url()).pathname.endsWith('/man-2-unrig.glb')) libraryFetches++;
   });
   await page.goto('/');
   await expect(page.locator('canvas[data-renderer]')).toBeVisible();
@@ -56,12 +56,15 @@ test('insert a studio visitor and a local GLB without replacing the guide or the
   expect(libraryFetches).toBe(0);
   await page.getByRole('button', { name: '2D Plan', exact: true }).click();
   await trigger(page).click();
+  await expect(page.getByLabel('Library model')).toHaveValue('visitor');
+  await expect(page.getByRole('dialog')).toContainText('man-2-unrig.glb');
   await insert(page).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('canvas[data-renderer]')).toBeVisible();
   const first = await people(page);
   expect(first.actors).toHaveLength(1);
-  expect(first.actors[0].meshes).toHaveLength(1);
+  expect(first.actors[0].meshes).toHaveLength(10);
+  expect(first.actors[0].meshes).not.toContain('humanBody_0');
   expect(first.actors[0].pos[1]).toBe(0);
   expect(first.actors[0].pos).not.toEqual(first.guidePos);
   expect(first).toMatchObject({
@@ -76,7 +79,14 @@ test('insert a studio visitor and a local GLB without replacing the guide or the
   expect((await people(page)).actors).toEqual(first.actors);
   await page.getByRole('button', { name: 'Close rendering settings' }).click();
 
+  // A second shelf instance reuses prepared geometry/maps (not a second fetch/parse).
   await trigger(page).click();
+  await insert(page).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const two = (await people(page)).actors;
+  expect(two[1].uuid).not.toBe(first.actors[0].uuid);
+  await trigger(page).click();
+  await page.getByRole('button', { name: 'Remove Visitor 2', exact: true }).click();
   await page.getByRole('button', { name: 'Local GLB', exact: true }).click();
   await expect(insert(page)).toBeDisabled();
   const input = page.getByLabel('Human GLB files');
@@ -155,8 +165,12 @@ test('mobile menu fits, closes with Escape, and cancellation drops a late import
   await page.evaluate(() => (window as any).finishRead());
   await trigger(page).click();
   await expect(page.getByRole('dialog')).toContainText('0 / 2 extras');
+  await page.locator('summary').filter({ hasText: 'Motion JSON' }).click();
+  await page.getByRole('button', { name: 'Use Ada’s sample take' }).click();
+  await expect(page.getByLabel('Library model')).toHaveValue('animated');
   await insert(page).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect((await people(page)).actors[0].id).toBe('Human_ada');
   await page.getByRole('button', { name: 'Office Dining Hall', exact: true }).click();
   await page.getByRole('button', { name: /^Soho Gallery Loft/ }).click();
   await expect.poll(async () => (await people(page)).actors.length).toBe(0);
@@ -372,7 +386,10 @@ test('a plain low-poly GLB can use an embedded world texture; bad UVs, pivots an
     });
     let pivot = '',
       uvs = '',
-      size = '';
+      size = '',
+      topology = '',
+      maps = '',
+      tris = '';
     mesh.position.y = 0.4;
     try {
       await insertPlane();
@@ -380,6 +397,29 @@ test('a plain low-poly GLB can use an embedded world texture; bad UVs, pivots an
       pivot = String(e);
     }
     mesh.position.y = 0;
+    atlas.width = 2049;
+    atlas.height = 1;
+    try {
+      await insertPlane();
+    } catch (e) {
+      maps = String(e);
+    }
+    atlas.width = atlas.height = 4;
+    mesh.geometry = new T.PlaneGeometry(0.5, 1.6, 128, 128).translate(0, 0.8, 0);
+    try {
+      await insertPlane();
+    } catch (e) {
+      tris = String(e);
+    }
+    mesh.geometry = geo;
+    const validIndex = geo.index;
+    geo.setIndex([0, 2, 1, 0, 2, 1, 0, 2, 1]);
+    try {
+      await insertPlane();
+    } catch (e) {
+      topology = String(e);
+    }
+    geo.setIndex(validIndex);
     geo.attributes.uv.array.fill(0);
     try {
       await insertPlane();
@@ -393,10 +433,111 @@ test('a plain low-poly GLB can use an embedded world texture; bad UVs, pivots an
     }
     const kept = cast.group.children.length === 1 && cast.group.children[0] === original;
     cast.clear();
-    return { mipmaps, kept, disposed, pivot, uvs, size };
+    return { mipmaps, kept, disposed, pivot, uvs, size, topology, maps, tris };
   });
   expect(result).toMatchObject({ mipmaps: true, kept: true, disposed: true });
   expect(result.pivot).toContain('origin between the feet');
   expect(result.uvs).toContain('UV');
   expect(result.size).toContain('8 MiB');
+  expect(result.topology).toMatch(/non-manifold|inconsistent winding/);
+  expect(result.maps).toContain('2048');
+  expect(result.tris).toContain('32,000');
+});
+
+test('the actual detailed local GLB keeps its skin and maps, selects mobile LODs, and releases them on clear', async ({
+  page,
+}) => {
+  await stage(page);
+  const result = await page.evaluate(async () => {
+    const { cast, three: T, camera } = window as any;
+    const name = 'man-2-unrig.glb',
+      bytes = await (await fetch('/data/humans/' + name)).blob();
+    const file = new File([bytes], name);
+    await cast.insert([file], '');
+    const actor = cast.group.children[0],
+      parts: any[] = [],
+      images = new Set<any>(),
+      joints = new Set<any>();
+    actor.updateMatrixWorld(true);
+    actor.traverseVisible((m: any) => {
+      if (!m.isMesh) return;
+      parts.push(m);
+      m.skeleton.bones.forEach((b: any) => joints.add(b));
+      Object.values(m.material).forEach((v: any) => {
+        if (v?.isTexture) images.add(v.image);
+      });
+    });
+    const box = new T.Box3().setFromObject(actor, true);
+    const tri = () => parts.reduce((n, m) => n + m.geometry.index.count / 3, 0);
+    const clock = (distance: number) =>
+      cast.update(0, camera.copy(actor.position).add(new T.Vector3(0, 0, distance)));
+    clock(0);
+    const close = tri();
+    clock(10);
+    const medium = tri();
+    clock(20);
+    const far = tri();
+    let freed = 0;
+    parts[0].geometry.addEventListener('dispose', () => freed++);
+    const texels = [...images].reduce((n, i) => n + i.width * i.height, 0);
+    const material = parts.find((m) => m.material.name === 'Wolf3D_Skin')?.material;
+    const pbr =
+      !!material?.map?.isTexture &&
+      material.map.generateMipmaps &&
+      material.map.colorSpace === T.SRGBColorSpace;
+    const opaque = parts.every((m) => !m.material.transparent && !m.castShadow);
+    let clipError = '';
+    try {
+      await cast.insert(
+        [file],
+        JSON.stringify({
+          format: 'planwalk.humans.v1',
+          preset: 'office',
+          models: { v: { file: name, idleClip: 'Relaxed' } },
+          actors: [{ id: 'test', model: 'v', spawn: { x: 0.5, z: -0.6, yawDeg: 0 }, steps: [] }],
+        })
+      );
+    } catch (e) {
+      clipError = String(e);
+    }
+    const kept = cast.group.children.length === 1 && cast.group.children[0] === actor;
+    cast.clear();
+    return {
+      meshes: parts.length,
+      palettes: new Set(parts.map((m) => m.skeleton)).size,
+      images: images.size,
+      joints: joints.size,
+      height: box.max.y - box.min.y,
+      foot: box.min.y,
+      close,
+      medium,
+      far,
+      texels,
+      pbr,
+      opaque,
+      freed,
+      clipError,
+      kept,
+    };
+  });
+  expect(result).toMatchObject({
+    meshes: 10,
+    palettes: 1,
+    images: 16,
+    joints: 58,
+    pbr: true,
+    opaque: true,
+    freed: 1,
+    kept: true,
+  });
+  expect(result.height).toBeCloseTo(1.86, 2);
+  expect(Math.abs(result.foot)).toBeLessThan(0.01);
+  expect(result.texels).toBeLessThanOrEqual(2 * 512 * 512);
+  expect(result.close).toBeLessThanOrEqual(10_000);
+  expect(result.close).toBeGreaterThan(result.medium);
+  expect(result.medium).toBeLessThanOrEqual(5_000);
+  expect(result.medium).toBeGreaterThan(result.far);
+  expect(result.far).toBeLessThanOrEqual(2_000);
+  expect(result.far).toBeGreaterThan(0);
+  expect(result.clipError).toContain('no playable clip “Relaxed”');
 });
