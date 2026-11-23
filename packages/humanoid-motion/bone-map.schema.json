@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Humanoid bone map v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "bones"
+  ],
+  "properties": {
+    "format": {
+      "const": "planwalk.humanoid-rig.v1"
+    },
+    "bones": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "hips",
+          "chest",
+          "head",
+          "leftUpperArm",
+          "leftLowerArm",
+          "leftHand",
+          "rightUpperArm",
+          "rightLowerArm",
+          "rightHand",
+          "leftUpperLeg",
+          "leftLowerLeg",
+          "leftFoot",
+          "rightUpperLeg",
+          "rightLowerLeg",
+          "rightFoot"
+        ]
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "\\S"
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@ import { library, type LibraryId } from './library';
 import type { FloorplanData, Point2D } from '../../types/floorplan';
 import type { NavGrid } from '../../utils/pathfinding';
 import { HumanActor } from './actor';
-import { disposeModel, loadModel, type HumanModel } from './model';
+import { disposeModel, loadModel, type GenerateMotion, type HumanModel } from './model';
 import { MAX_ACTORS, nearbyMark, readTake, type ActorSpec, type ModelSpec, type Navigation } from './take';
 
 export interface CastState {
@@ -67,7 +67,7 @@ export class HumanCast {
     this.pending?.abort();
   }
 
-  async insert(source: ModelSource, text: string) {
+  async insert(source: ModelSource, text: string, generate?: GenerateMotion) {
     this.cancelInsert();
     const token = new AbortController(),
       { signal } = token;
@@ -81,6 +81,12 @@ export class HumanCast {
         throw new Error('v1 motion takes use the Office Dining Hall floorplan.');
       const shelf = typeof source === 'string' ? library[source] : null;
       const names = Array.isArray(source) ? source.map((f) => f.name) : [library[source].file];
+      if (generate && !Array.isArray(source))
+        throw new Error('Choose Local GLB to generate humanoid motion.');
+      if (generate?.profile && names.length !== 1)
+        throw new Error(
+          'Use a separate bone map with one GLB at a time, or embed each profile in its scene.'
+        );
       if (!names.length) throw new Error('Choose a local .glb model first.');
       if (names.length > 2 || new Set(names).size !== names.length)
         throw new Error('Choose up to two uniquely named GLB files.');
@@ -104,7 +110,7 @@ export class HumanCast {
       if (Array.isArray(source)) {
         for (const file of source) {
           signal.throwIfAborted();
-          models.set(file.name, await loadModel(file, signal, this.mobile));
+          models.set(file.name, await loadModel(file, signal, this.mobile, generate));
         }
       } else {
         const entry = library[source];

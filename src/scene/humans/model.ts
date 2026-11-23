@@ -1,9 +1,22 @@
 import * as T from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildDetailLods, fitSkinPalettes, TRIANGLES, type GeometryLods } from './detail';
-import { planImages, useImageBudget, type EmbeddedMaps } from './imageBudget';
+import { planImages, useImageBudget } from './imageBudget';
 import { library } from './library';
-import { authorRigClips, RIG_FILE, RIG_CLIPS } from './rigMotion';
+import {
+  bindHumanoid,
+  createHumanoidClips,
+  CLIPS,
+  parseBoneMap,
+  RigError,
+  type BoneMap,
+} from '../../../packages/humanoid-motion/src/index';
+import { readEnvelope } from '../../../packages/humanoid-motion/src/envelope';
+import visitorMap from '../../../packages/humanoid-motion/examples/man-rig.rig.json';
+
+export interface GenerateMotion {
+  profile?: BoneMap;
+}
 
 export const MAX_GLB_BYTES = 8 * 1024 * 1024;
 export interface HumanModel {
@@ -13,90 +26,14 @@ export interface HumanModel {
   previewMotion?: { idleClip: string; openingClip: string };
 }
 
-interface Envelope extends EmbeddedMaps {
-  asset?: { version: string };
-  scenes?: { nodes?: number[] }[];
-  nodes?: { name?: string; children?: number[]; mesh?: number; skin?: number }[];
-  buffers?: { uri?: string }[];
-  accessors?: { count: number; bufferView?: number; sparse?: unknown }[];
-  materials?: { alphaMode?: string }[];
-  cameras?: unknown[];
-  extensionsUsed?: string[];
-  meshes?: { primitives: { mode?: number; attributes: Record<string, number> }[] }[];
-}
-
-// Check the envelope BEFORE GLTFLoader can resolve a URL or allocate attribute arrays.
+// Only the Studio enforces these texture/render budgets. The reusable rig library
+// has no dependency on the viewport, model shelf or office floorplan.
 function checkEnvelope(bytes: ArrayBuffer, file: string, mobile: boolean) {
-  const view = new DataView(bytes);
-  if (
-    bytes.byteLength < 28 ||
-    view.getUint32(0, true) !== 0x46546c67 ||
-    view.getUint32(4, true) !== 2 ||
-    view.getUint32(8, true) !== bytes.byteLength ||
-    view.getUint32(16, true) !== 0x4e4f534a
-  ) {
-    throw new Error('Expected a binary glTF 2.0 (.glb) file.');
-  }
-  const doc: Envelope = JSON.parse(
-    new TextDecoder().decode(new Uint8Array(bytes, 20, view.getUint32(12, true)))
-  );
-  if (doc.asset?.version !== '2.0' || doc.scenes?.length !== 1 || (doc.nodes?.length ?? 0) > 512) {
-    throw new Error('Export one glTF 2.0 scene with at most 512 nodes.');
-  }
-  // Cyclic node dependencies can leave a parser promise waiting for itself.
-  const nodes = doc.nodes ?? [],
-    visited = new Uint8Array(nodes.length);
-  function visit(i: number) {
-    if (!Number.isInteger(i) || !nodes[i] || visited[i] === 1)
-      throw new Error('GLB has a broken node hierarchy.');
-    if (visited[i] === 2) return;
-    visited[i] = 1;
-    nodes[i].children?.forEach(visit);
-    visited[i] = 2;
-  }
-  nodes.forEach((_, i) => visit(i));
-  if (
-    doc.buffers?.length !== 1 ||
-    doc.buffers[0].uri !== undefined ||
-    doc.images?.some((img) => img.uri !== undefined || img.bufferView === undefined)
-  ) {
-    throw new Error('Embed buffers and images in the GLB. External resources are not allowed.');
-  }
-  const binStart = 28 + view.getUint32(12, true);
-  if (
-    binStart > bytes.byteLength ||
-    view.getUint32(binStart - 4, true) !== 0x004e4942 ||
-    view.getUint32(binStart - 8, true) !== bytes.byteLength - binStart
-  ) {
-    throw new Error('Invalid binary GLB chunk.');
-  }
+  const { doc, binStart } = readEnvelope(bytes, 512, 120_000);
+  const nodes = doc.nodes ?? [];
   const images = planImages(bytes, binStart, doc, mobile);
-  const extension = doc.extensionsUsed?.find(
-    (name) => !['KHR_materials_unlit', 'KHR_texture_transform', 'KHR_mesh_quantization'].includes(name)
-  );
-  if (extension)
-    throw new Error(`Unsupported extension ${extension}. Export core glTF without compression or effects.`);
   if (doc.cameras?.length || doc.materials?.some((m) => m.alphaMode === 'BLEND'))
     throw new Error('Remove cameras and blended materials.');
-  if (
-    doc.accessors?.some(
-      (a) =>
-        !Number.isSafeInteger(a.count) ||
-        a.count < 1 ||
-        a.count > 120_000 ||
-        a.bufferView === undefined ||
-        a.sparse
-    )
-  ) {
-    throw new Error('Use dense, buffer-backed accessors with at most 120,000 elements each.');
-  }
-  for (const mesh of doc.meshes ?? [])
-    for (const p of mesh.primitives) {
-      if (p.mode !== undefined && p.mode !== 4)
-        throw new Error('Export triangle meshes only (no lines or particles).');
-      if (Object.keys(p.attributes).some((k) => /^(JOINTS|WEIGHTS)_[1-9]/.test(k)))
-        throw new Error('Limit skinning to four weights per vertex.');
-    }
   // The supplied Blender scene contains two coincident full people. Select the dressed
   // armature, not the separate black humanBody reference, BEFORE GLTFLoader decodes it.
   // Never discard arbitrary secondary roots from other imported scenes.
@@ -329,7 +266,12 @@ export function disposeModel(model: HumanModel) {
   images.forEach((img) => img.close());
 }
 
-export async function loadModel(file: File, signal: AbortSignal, mobile = false): Promise<HumanModel> {
+export async function loadModel(
+  file: File,
+  signal: AbortSignal,
+  mobile = false,
+  generate?: GenerateMotion
+): Promise<HumanModel> {
   if (!/\.glb$/i.test(file.name) || file.size > MAX_GLB_BYTES)
     throw new Error(`${file.name}: choose a .glb of at most 8 MiB.`);
   const urls = new Set<string>();
@@ -364,11 +306,15 @@ export async function loadModel(file: File, signal: AbortSignal, mobile = false)
     if (imageError) throw new Error('Could not decode an embedded texture.');
     await inspect(model, signal);
     signal.throwIfAborted();
-    if (file.name === RIG_FILE && !model.animations.length) {
-      const clips = authorRigClips(model.scene);
-      if (clips) {
-        model.animations = clips;
-        model.previewMotion = { idleClip: RIG_CLIPS.idle, openingClip: RIG_CLIPS.wave };
+    if (generate || (file.name === library.rigged.file && !model.animations.length)) {
+      try {
+        // Explicit generation works on ANY filename. The old automatic shelf greeting
+        // stays opt-in by its exact profile for backwards compatibility.
+        const rig = bindHumanoid(model.scene, generate ? generate.profile : parseBoneMap(visitorMap));
+        model.animations.push(...createHumanoidClips(rig, model.animations));
+        model.previewMotion = { idleClip: CLIPS.idle, openingClip: CLIPS.wave };
+      } catch (e) {
+        if (generate || !(e instanceof RigError)) throw e;
       }
     }
     return model;

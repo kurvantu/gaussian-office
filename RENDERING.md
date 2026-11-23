@@ -37,7 +37,9 @@ Extra people are a separate triangle group in both rendering modes. They add **z
 | Maps | Prefer two atlased world maps. Multi-material sources may embed ≤20 PNG/JPEG images and ≤20 textures, ≤2048 px per side, ≤24 × 1024² source pixels total. Before decoding, the importer budgets **2 × 1024² base texels combined** on desktop, **2 × 512²** on mobile; it scales images proportionally instead of dropping PBR maps. Mipmaps on, normals linear, color maps sRGB. Keep source-resolution masters. BC7 (PC), ASTC 6×6 (mobile) and BC5 normals are production compression targets, **not** formats accepted by this GLB loader. Library portraits are small UI WebPs, not GPU world maps. |
 | Motion | Use named **in-place** clips; v1 does not extract root motion, retarget rigs or do crowd avoidance. Walk speeds use the clip’s authored `walkRefMps`. Extra actors never drive Elena or her camera. |
 
-**Detailed visitor (default).** The [unchanged source GLB](data/humans/man-2-unrig.glb) is 5,873,228 bytes. Its two roots overlap: `Sketchfab_model` is the dressed, skinned person; `Sketchfab_model.001` contains a second black `humanBody_0` reference. For this export, the importer selects the dressed root before decoding meshes or images. Picking the named file locally uses the same path. No bytes are rewritten on disk and no clips are invented.
+The [humanoid rig contract](packages/humanoid-motion/GLB-CONTRACT.md) is an additional requirement **only when generating motion**. The standalone rig inspector checks the loaded skeleton, not Studio’s mesh/topology/texture budgets. A valid static prop or an actor with its own clips does not need a bone map.
+
+**Detailed visitor (default).** The [unchanged source GLB](data/humans/man-2-unrig.glb) is 5,873,228 bytes. Its two roots overlap: `Sketchfab_model` is the dressed, skinned person; `Sketchfab_model.001` contains a second black `humanBody_0` reference. For this export, the importer selects the dressed root before decoding meshes or images. Picking the named file locally uses the same path. No bytes are rewritten on disk; normal insertion leaves the model in its rest pose.
 
 | Measured in the viewer | Detailed visitor |
 | --- | --- |
@@ -47,13 +49,13 @@ Extra people are a separate triangle group in both rendering modes. They add **z
 
 All four generated index buffers reuse the same vertex attributes. Two instances of the same library entry share the prepared model, but have separate skeletons and distance selections. Removing the last instance releases its textures and LOD geometry. These counts were checked using software WebGL2, **not** profiled on a target phone.
 
-**Rigged visitor.** [`man-rig.glb`](data/humans/man-rig.glb) is a separate 5,065,452-byte source with one clothed character, one skin (68 joints) and **no embedded animation**. It uses the same texture, weighted-palette and distance LOD limits as the detailed visitor. Its [motion profile](src/scene/humans/rigMotion.ts) builds tracks once per loaded model from the actual rest orientations. It applies only to the named clipless rig with the expected chains, not to arbitrary uploads or Elena. An explicit motion take overrides the insertion greeting.
+**Rigged visitor.** [`man-rig.glb`](data/humans/man-rig.glb) is a separate 5,065,452-byte source with one clothed character, one skin (68 joints) and **no embedded animation**. It uses the same texture, weighted-palette and distance LOD limits as the detailed visitor. Its [bone map](packages/humanoid-motion/examples/man-rig.rig.json) feeds the [shared motion library](packages/humanoid-motion/README.md), which builds tracks once per loaded model from its rest orientations and proportions. The library greeting remains the default for this named clipless visitor. Other files opt in under **Local GLB → Generate humanoid motion** and can supply their own map; Elena is never bound. An explicit motion take overrides the insertion greeting.
 
 | Authored clip | Playback |
 | --- | --- |
 | `WelcomeWave` · 3.6 s | Raises the right arm, turns the palm forward, waves and lowers it. Starts and ends at the idle pose with feet planted. |
 | `EasyIdle` · 4 s | Seamless breathing and small head/shoulder movements. |
-| `HallwayWalk_IP` · 1.04 s | In-place, two-step loop at a reference **1.2 m/s**. Uses measured leg lengths and alternating foot contact/swing. Only the path controller translates the actor across the floor; the clip moves the hips vertically. |
+| `HallwayWalk_IP` · ~1.04 s on this rig | In-place, two-step loop at a reference **1.2 m/s**. Uses measured leg lengths and alternating foot contact/swing. Only the path controller translates the actor across the floor; the clip moves the hips vertically. |
 
 [`npm run export:rigged-visitor`](scripts/export-rigged-visitor.mjs) bakes the same curves as standard glTF joint channels into a separate `exports/man-rig-animated.glb`. Neither export nor playback requires Blender or another animation service.
 

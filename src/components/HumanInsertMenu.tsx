@@ -20,6 +20,9 @@ import { MAX_ACTORS, MAX_JSON_CHARS } from '../scene/humans/take';
 import example from '../../docs/prompts/human-motion-v1.example.json';
 import rigTake from '../../docs/prompts/man-rig.walk-and-greet.json';
 import { library, type LibraryId } from '../scene/humans/library';
+import { readBoneMap } from '../../packages/humanoid-motion/src/index';
+import contractUrl from '../../packages/humanoid-motion/GLB-CONTRACT.md?url&inline';
+import mapExampleUrl from '../../packages/humanoid-motion/examples/studio-visitor.rig.json?url&inline';
 
 interface Props {
   cast: RefObject<HumanCast | null>;
@@ -65,6 +68,8 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
   const [libraryId, setLibraryId] = useState<LibraryId>('visitor');
   const [files, setFiles] = useState<File[]>([]);
   const [text, setText] = useState('');
+  const [generate, setGenerate] = useState(false);
+  const [mapText, setMapText] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
@@ -72,7 +77,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
   const rigSelected =
     source === 'library'
       ? libraryId === 'rigged'
-      : files.length === 1 && files[0].name === library.rigged.file;
+      : files.length === 1 && (generate || files[0].name === library.rigged.file);
   useEffect(() => {
     const el = dialog.current!,
       owner = cast.current;
@@ -94,7 +99,11 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     setBusy(true);
     setError('');
     try {
-      const names = await cast.current.insert(source === 'library' ? libraryId : files, text);
+      const motion =
+        source === 'file' && generate
+          ? { profile: mapText.trim() ? readBoneMap(mapText) : undefined }
+          : undefined;
+      const names = await cast.current.insert(source === 'library' ? libraryId : files, text, motion);
       if (active.current) {
         onInserted(names);
         dismiss();
@@ -106,19 +115,23 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
       if (active.current) setBusy(false);
     }
   };
-  const openTake = async (file: File | undefined) => {
+  const openJson = async (file: File | undefined, kind: 'take' | 'map') => {
     if (!file) return;
-    if (file.size > MAX_JSON_CHARS) {
-      setError('Choose a motion JSON file of at most 64 KiB.');
+    if (file.size > (kind === 'take' ? MAX_JSON_CHARS : 16384)) {
+      setError(
+        kind === 'take'
+          ? 'Choose a motion JSON file of at most 64 KiB.'
+          : 'Choose a bone map of at most 16 KiB.'
+      );
       return;
     }
     setReading(true);
     setError('');
     try {
       const content = await file.text();
-      if (active.current) setText(content);
+      if (active.current) (kind === 'take' ? setText : setMapText)(content);
     } catch {
-      if (active.current) setError('Could not read the motion JSON file.');
+      if (active.current) setError('Could not read the JSON file.');
     } finally {
       if (active.current) setReading(false);
     }
@@ -128,7 +141,12 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     setText(
       JSON.stringify(
         rigSelected
-          ? rigTake
+          ? {
+              ...rigTake,
+              models: {
+                rig: { ...rigTake.models.rig, file: source === 'file' ? files[0].name : library.rigged.file },
+              },
+            }
           : { ...example, models: { visitor: example.models.visitor }, actors: [example.actors[0]] },
         null,
         2
@@ -242,6 +260,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 onChange={(e) => {
                   setFiles(Array.from(e.target.files ?? []));
+                  setMapText('');
                   setError('');
                 }}
               />
@@ -249,6 +268,77 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                 Feet at origin in metres · ≤32k triangles or authored LOD0–3
               </span>
             </label>
+          )}
+          {source === 'file' && (
+            <div className="mt-3 rounded-xl border border-[#d6dfd9] bg-white px-3 py-2.5">
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-[#354f45]">
+                <input
+                  type="checkbox"
+                  checked={generate}
+                  onChange={(e) => {
+                    setGenerate(e.target.checked);
+                    setError('');
+                  }}
+                  className="accent-[#38594c]"
+                />
+                Generate humanoid motion
+              </label>
+              <p className="mt-1 text-[11px] leading-relaxed text-[#626259]">
+                Add a greeting, breathing idle and in-place walk to a skinned biped. Existing clips are kept.
+              </p>
+              {generate && (
+                <details className="mt-2 border-t border-black/[.08] pt-2 text-[11px]">
+                  <summary className="cursor-pointer font-semibold text-[#496457]">
+                    Rig requirements &amp; optional bone map
+                  </summary>
+                  <p className="my-2 leading-relaxed">
+                    One weighted skeleton, standing in metres, Y up, facing +Z. Use hips, chest, head, and
+                    upper/lower limbs with hands and feet on both sides. A- and T-poses work. Standard names
+                    match automatically.{' '}
+                    <a
+                      className="text-[#38594c] underline"
+                      href={contractUrl}
+                      download="humanoid-glb-checklist.md"
+                    >
+                      Download the GLB checklist
+                    </a>
+                  </p>
+                  <label className="block font-semibold" htmlFor="rig-map">
+                    Bone map JSON <span className="font-normal">· optional for custom names</span>
+                  </label>
+                  <textarea
+                    id="rig-map"
+                    value={mapText}
+                    maxLength={16384}
+                    spellCheck={false}
+                    onChange={(e) => {
+                      setMapText(e.target.value);
+                      setError('');
+                    }}
+                    placeholder='{"format":"planwalk.humanoid-rig.v1","bones":{"hips":"Pelvis_CTL"}}'
+                    className="font-mono-tech mt-1 h-16 w-full resize-y rounded-md border border-black/10 bg-[#fafaf7] p-2 text-[11px]"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <label className={`${smallButton} relative focus-within:outline-2`}>
+                      <FolderOpen size={12} /> Open bone map
+                      <input
+                        type="file"
+                        aria-label="Open bone map file"
+                        accept=".json,application/json"
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                        onChange={(e) => {
+                          void openJson(e.currentTarget.files?.[0], 'map');
+                          e.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+                    <a className="text-[#38594c] underline" href={mapExampleUrl} download="humanoid.rig.json">
+                      Download example map
+                    </a>
+                  </div>
+                </details>
+              )}
+            </div>
           )}
           <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#5d6057]">
             <Footprints size={13} className="mt-0.5 shrink-0" />
@@ -292,7 +382,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                     aria-label="Open motion JSON file"
                     className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                     onChange={(e) => {
-                      void openTake(e.currentTarget.files?.[0]);
+                      void openJson(e.currentTarget.files?.[0], 'take');
                       e.currentTarget.value = '';
                     }}
                   />
@@ -397,7 +487,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
         {(error || state.problem) && (
           <p
             role="alert"
-            className="mt-3 break-words rounded-lg bg-[#f9ebe3] px-3 py-2 text-xs leading-relaxed text-[#8b3c27]"
+            className="mt-3 whitespace-pre-line break-words rounded-lg bg-[#f9ebe3] px-3 py-2 text-xs leading-relaxed text-[#8b3c27]"
           >
             {error || state.problem}
           </p>
