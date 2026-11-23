@@ -26,7 +26,7 @@ All actors start together. An actor finishes one step before starting the next, 
 - walkTo: {op,x,z,speedMps}. Reach the world target via the navigation plan, face the direction of travel, loop walkClip while moving. speedMps and walkRefMps are 0.2–2 inclusive. Omitted direction speed defaults to 1.52 m/s; do not guess the asset's walkRefMps. Arrival, not an invented timestamp, ends this step.
 - turnTo: {op,yawDeg,durationSec}. Turn in place by the shortest arc; default duration 0.5 s.
 - wait: {op,durationSec}. Stay at the current mark. Wait/turn durations are >0 and ≤30 seconds.
-- play: {op,clip}. Play one named, in-place embedded clip once at its authored speed. End on clip completion; do not translate the actor root.
+- play: {op,clip}. Play one named, in-place clip from the supplied inventory once at its authored speed. End on clip completion; do not translate the actor root.
 - pose: {op,bone,keys:[{tSec,xyzDeg:[x,y,z]},...]}. Key ONE supplied non-root bone while stationary. Rotations are local XYZ Euler offsets in degrees from that frame's unmodified idle/rest pose, not absolute world angles. The player converts to quaternions and slerps between keys. Use 3–16 strictly increasing times, starting at 0 and ending at ≤10 seconds. First and last offsets must both be [0,0,0]. Last key ends the step. Use artist-supplied bone axes/angles; do not infer them from a bone name.
 
 If a requested wave exists as a clip, use play. If the artist specifies a joint movement, use pose. If neither a matching clip nor enough joint data is supplied, ask for it. Do not output frame-by-frame paths, executable expressions, loops, network assets, or camera/environment commands.
@@ -37,6 +37,10 @@ Few-shot response:
 Same input, but ask Fern to walk to office-aisle instead:
 {"needsInput":["Which in-place walk clip and calibrated walkRefMps can you supply for Fern.glb?"]}
 ```
+
+### Rigged visitor inventory
+
+For **Rigged visitor** (`man-rig.glb`), the viewer supplies `EasyIdle`, `HallwayWalk_IP` (in-place at **1.2 m/s**) and one-shot `WelcomeWave` on the uploaded skeleton. These clips are authored by PlanWalk, not embedded in the original file. The [walk & greet take](man-rig.walk-and-greet.json) runs from the menu with either the library model or the matching local GLB. Do not use Ada’s `Visitor.glb` clip names for this rig.
 
 ### Shot card (user message)
 

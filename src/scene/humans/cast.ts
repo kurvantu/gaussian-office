@@ -125,21 +125,26 @@ export class HumanCast {
       const occupied = this.actors.map((a) => a.root.position as Point2D);
       const specs: ActorSpec[] =
         take?.actors ??
-        Array.from(assets, ([model, { file }]) => {
-          let stem = file
-            .slice(0, -4)
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/-$/, '')
-            .slice(0, 26);
-          if (source === 'visitor' || !/^[a-z]/.test(stem) || stem === 'elena') stem = 'visitor';
+        Array.from(assets, ([model, asset]): ActorSpec => {
+          const { file } = asset;
+          const preview = models.get(file)!.previewMotion;
+          if (preview) asset.idleClip = preview.idleClip; // no defaults override an explicit take
+          let stem =
+            shelf?.actorId ??
+            file
+              .slice(0, -4)
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/-$/, '')
+              .slice(0, 26);
+          if (!/^[a-z]/.test(stem) || stem === 'elena') stem = 'visitor';
           let id = stem,
             n = 1;
           while (taken.has(id)) id = `${stem}-${++n}`;
           taken.add(id);
           const spawn = nearbyMark(this.guide.position, this.guide.rotation.y, occupied, this.nav!);
           occupied.push(spawn);
-          return { id, model, spawn, steps: [] };
+          return { id, model, spawn, steps: preview ? [{ op: 'play', clip: preview.openingClip }] : [] };
         });
       for (const [i, spec] of specs.entries()) {
         const asset = assets.get(spec.model)!;

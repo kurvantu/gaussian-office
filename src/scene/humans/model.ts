@@ -3,12 +3,14 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildDetailLods, fitSkinPalettes, TRIANGLES, type GeometryLods } from './detail';
 import { planImages, useImageBudget, type EmbeddedMaps } from './imageBudget';
 import { library } from './library';
+import { authorRigClips, RIG_FILE, RIG_CLIPS } from './rigMotion';
 
 export const MAX_GLB_BYTES = 8 * 1024 * 1024;
 export interface HumanModel {
   scene: T.Group;
   animations: T.AnimationClip[];
   generatedLods?: GeometryLods;
+  previewMotion?: { idleClip: string; openingClip: string };
 }
 
 interface Envelope extends EmbeddedMaps {
@@ -362,6 +364,13 @@ export async function loadModel(file: File, signal: AbortSignal, mobile = false)
     if (imageError) throw new Error('Could not decode an embedded texture.');
     await inspect(model, signal);
     signal.throwIfAborted();
+    if (file.name === RIG_FILE && !model.animations.length) {
+      const clips = authorRigClips(model.scene);
+      if (clips) {
+        model.animations = clips;
+        model.previewMotion = { idleClip: RIG_CLIPS.idle, openingClip: RIG_CLIPS.wave };
+      }
+    }
     return model;
   } catch (error) {
     if (model) disposeModel(model);
