@@ -39,6 +39,7 @@ export function App() {
 
   const humanCast = useRef<HumanCast | null>(null);
   const [castState, setCastState] = useState(emptyCast);
+  const activeGuide = castState.people.find(p => p.id === castState.guideId);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     if (!notice) return;
@@ -54,6 +55,7 @@ export function App() {
   const [lighting, setLighting] = useState<LightingPreset>('daylight');
 
   // 3D Human Guide anatomy inspection & animation state
+  const inspectDockRef = useRef<HTMLDivElement>(null);
   const [inspectTarget, setInspectTarget] = useState<GuideInspectTarget>('none');
   const [guideGesture, setGuideGesture] = useState<GuideGesture>('auto');
 
@@ -159,7 +161,7 @@ export function App() {
     handleSelectPreset(presetId);
   };
 
-  // Navigate Elena to a specific Tour Stop
+  // Navigate the guide to a specific Tour Stop
   const goToTourStop = useCallback(
     (index: number, keepPlaying?: boolean) => {
       const stops = floorplan.tourStops;
@@ -191,7 +193,7 @@ export function App() {
     [floorplan.tourStops, stopSpeech, viewMode]
   );
 
-  // Walk Elena to any arbitrary user-clicked floor coordinate (2D or 3D!)
+  // Walk the guide to any arbitrary user-clicked floor coordinate (2D or 3D!)
   const handleWalkGuideTo = useCallback(
     (pt: Point2D) => {
       stopSpeech();
@@ -210,7 +212,7 @@ export function App() {
     [stopSpeech]
   );
 
-  // Called when Elena finishes walking along her A* path
+  // Called when the guide finishes walking along the A* path
   const handleGuideArrived = useCallback(
     (_walkId: number, tourStopId?: string) => {
       if (!tourStopId) return;
@@ -281,19 +283,14 @@ export function App() {
     }
   };
 
-  const handleToggleInspectGuide = () => {
-    if (inspectTarget !== 'none') {
-      setInspectTarget('none');
-      setGuideGesture('auto');
-    } else {
+  const handleInspect = (target: GuideInspectTarget) => {
+    if (target !== 'none') {
       stopSpeech();
       setIsTourPlaying(false);
-      if (viewMode === '2d' || viewMode === 'tour') {
-        setViewMode('3d');
-      }
-      setGuideGesture('auto');
-      setInspectTarget('full');
+      if (viewMode === '2d' || viewMode === 'tour') setViewMode('3d');
     }
+    setGuideGesture('auto');
+    setInspectTarget(target);
   };
 
   const handleToggleVoice = () => {
@@ -436,7 +433,7 @@ export function App() {
           })}
         </nav>
 
-        {/* Right: insert additional people, inspect Elena, or reset */}
+        {/* Right: insert additional people, inspect the guide, or reset */}
         <div className="flex items-center gap-1.5 shrink-0">
           <HumanInsertMenu key={presetId} cast={humanCast} state={castState} office={presetId === OFFICE.id}
             onInserted={names => {
@@ -445,13 +442,13 @@ export function App() {
             }} />
           <button
             aria-label="Inspect Guide"
-            onClick={handleToggleInspectGuide}
+            onClick={() => handleInspect(inspectTarget === 'none' ? 'full' : 'none')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer border ${
               inspectTarget !== 'none'
                 ? 'bg-[#3D5A52] text-white border-[#3D5A52] shadow-xs'
                 : 'bg-white hover:bg-[#F6F5F1] text-[#1C1B19] border-black/10'
             }`}
-            title="Inspect the 3D human guide up close (head, neck, body, 5 fingers per hand & 5 toes per foot)"
+            title="Change the guide model or inspect the body, head, hands and feet"
           >
             <UserCheck className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Inspect Guide</span>
@@ -523,6 +520,8 @@ export function App() {
         >
           <Scene3DViewport
             castRef={humanCast}
+            inspectDockRef={inspectDockRef}
+            activeGuide={activeGuide}
             onCastChange={setCastState}
             floorplan={floorplan}
             viewMode={viewMode}
@@ -531,10 +530,7 @@ export function App() {
             lighting={lighting}
             onLightingChange={setLighting}
             inspectTarget={inspectTarget}
-            onInspectTargetChange={(t) => {
-              setGuideGesture('auto');
-              setInspectTarget(t);
-            }}
+            onInspectTargetChange={handleInspect}
             guideGesture={guideGesture}
             walkRequest={walkRequest}
             activeTourStop={activeTourStop}
@@ -567,9 +563,20 @@ export function App() {
           )}
 
           {/* Bottom-Center Floating HUD: Anatomy Close-Up Inspector OR Guided Virtual Tour Dock */}
-          <div className="pointer-events-none absolute bottom-3 inset-x-0 flex justify-center px-3 z-20">
+          <div ref={inspectDockRef} className="pointer-events-none absolute bottom-3 inset-x-0 flex justify-center px-3 z-20">
             {inspectTarget !== 'none' ? (
               <GuideInspectorPanel
+                people={castState.people}
+                activeGuide={activeGuide}
+                onSelectModel={id => {
+                  try {
+                    humanCast.current?.selectGuide(id);
+                    setGuideGesture('auto');
+                  } catch (error) {
+                    setNotice(error instanceof Error ? error.message : 'Could not select that guide.');
+                  }
+                }}
+                onPlayWave={() => humanCast.current?.waveGuide()}
                 inspectTarget={inspectTarget}
                 onSelectTarget={setInspectTarget}
                 gesture={guideGesture}
@@ -577,6 +584,7 @@ export function App() {
               />
             ) : (
               <TourDock
+                guideName={activeGuide?.label ?? 'Elena'}
                 stops={floorplan.tourStops}
                 activeIndex={activeTourStopIndex}
                 isPlaying={isTourPlaying}

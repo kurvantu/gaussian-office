@@ -1,8 +1,13 @@
 import React from 'react';
+import type { CastPerson } from '../scene/humans/cast';
 import { GuideGesture, GuideInspectTarget } from '../types/floorplan';
 import { Footprints, Hand, Smile, Sparkles, User, X } from 'lucide-react';
 
 interface GuideInspectorPanelProps {
+  people: CastPerson[];
+  activeGuide?: CastPerson;
+  onSelectModel: (id: string | null) => void;
+  onPlayWave: () => void;
   inspectTarget: GuideInspectTarget;
   onSelectTarget: (target: GuideInspectTarget) => void;
   gesture: GuideGesture;
@@ -35,7 +40,15 @@ const TARGET_DETAILS: Record<
   },
 };
 
+const RIG_DETAILS: typeof TARGET_DETAILS = {
+  full: { title: 'Full Body', detail: 'This character follows the tour. Its original take is paused until you switch guides.' },
+  head: { title: 'Head', detail: 'Close-up of the head joint on the imported rig.' },
+  hands: { title: 'Hands', detail: 'Both wrists are driven by the skeleton. Play Wave to see the greeting.' },
+  feet: { title: 'Feet', detail: 'The feet follow the walking clip while the guide moves along its route.' },
+};
+
 export const GuideInspectorPanel: React.FC<GuideInspectorPanelProps> = ({
+  people, activeGuide, onSelectModel, onPlayWave,
   inspectTarget,
   onSelectTarget,
   gesture,
@@ -43,13 +56,13 @@ export const GuideInspectorPanel: React.FC<GuideInspectorPanelProps> = ({
 }) => {
   if (inspectTarget === 'none') return null;
 
-  const info = TARGET_DETAILS[inspectTarget];
+  const info = (activeGuide ? RIG_DETAILS : TARGET_DETAILS)[inspectTarget];
 
   const tabs: { id: Exclude<GuideInspectTarget, 'none'>; label: string; icon: React.ReactNode }[] = [
     { id: 'full', label: 'Full Body', icon: <User className="w-3.5 h-3.5" /> },
-    { id: 'head', label: 'Head & Neck', icon: <Smile className="w-3.5 h-3.5" /> },
-    { id: 'hands', label: 'Hands (5×2)', icon: <Hand className="w-3.5 h-3.5" /> },
-    { id: 'feet', label: 'Feet (5×2)', icon: <Footprints className="w-3.5 h-3.5" /> },
+    { id: 'head', label: activeGuide ? 'Head' : 'Head & Neck', icon: <Smile className="w-3.5 h-3.5" /> },
+    { id: 'hands', label: activeGuide ? 'Hands' : 'Hands (5×2)', icon: <Hand className="w-3.5 h-3.5" /> },
+    { id: 'feet', label: activeGuide ? 'Feet' : 'Feet (5×2)', icon: <Footprints className="w-3.5 h-3.5" /> },
   ];
 
   const gestures: { id: GuideGesture; label: string }[] = [
@@ -79,6 +92,24 @@ export const GuideInspectorPanel: React.FC<GuideInspectorPanelProps> = ({
         </button>
       </div>
 
+      <div className="mb-2">
+        <div className="flex items-center gap-2">
+          <label htmlFor="guide-model" className="shrink-0 text-[11px] font-semibold text-[#345447]">Guide model</label>
+          <select id="guide-model" aria-describedby="guide-model-help" value={activeGuide?.id ?? ''}
+            onChange={e => onSelectModel(e.target.value || null)}
+            className="min-w-0 flex-1 rounded-lg border border-black/15 bg-white px-2 py-1 text-xs text-[#1C1B19]">
+            <option value="">Elena (default)</option>
+            {people.map(p => <option key={p.id} value={p.id} disabled={!!p.guideIssue}>
+              {p.label} · {p.file}{p.guideIssue ? ' (unavailable)' : ''}
+            </option>)}
+          </select>
+        </div>
+        <div id="guide-model-help" className="text-[10px] text-[#62645c]">
+          {!people.some(p => !p.guideIssue) && <p className="mt-1">Insert a rigged human first.</p>}
+          {people.filter(p => p.guideIssue).map(p => <p key={p.id} className="mt-1">{p.label}: {p.guideIssue}</p>)}
+        </div>
+      </div>
+
       {/* Close-up Camera Region Switcher */}
       <div className="grid grid-cols-4 gap-1 bg-black/[0.045] p-1 rounded-xl mb-2">
         {tabs.map((tab) => {
@@ -86,6 +117,7 @@ export const GuideInspectorPanel: React.FC<GuideInspectorPanelProps> = ({
           return (
             <button
               key={tab.id}
+              aria-pressed={active}
               onClick={() => {
                 onSelectGesture('auto');
                 onSelectTarget(tab.id);
@@ -107,8 +139,11 @@ export const GuideInspectorPanel: React.FC<GuideInspectorPanelProps> = ({
 
       {/* Gesture Test Pills */}
       <div className="flex flex-wrap items-center gap-1 pt-2 border-t border-black/8">
-        <span className="text-[10px] font-mono-tech uppercase text-[#6B6860] mr-1">Pose:</span>
-        {gestures.map((g) => (
+        <span className="text-[10px] font-mono-tech uppercase text-[#6B6860] mr-1">{activeGuide ? 'Gesture:' : 'Pose:'}</span>
+        {activeGuide ? (
+          <button onClick={onPlayWave} title="Play the greeting once"
+            className="cursor-pointer rounded-full bg-[#3D5A52] px-2 py-0.5 text-[10.5px] font-medium text-white hover:bg-[#304a43]">Wave</button>
+        ) : gestures.map((g) => (
           <button
             key={g.id}
             onClick={() => onSelectGesture(g.id)}

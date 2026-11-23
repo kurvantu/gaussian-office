@@ -1,6 +1,6 @@
 # Gaussian Office · PlanWalk Studio
 
-Walk through an office dining hall with Elena, the articulated tour guide. The default 3D environment is the checked-in [`data/sog/office.sog`](data/sog/office.sog), rendered by Spark.js in Three.js. Elena is **not** part of the scan: her original model, joints, gestures, walking animation and close-up inspector are unchanged.
+Walk through an office dining hall with Elena, the default tour guide, or an inserted rigged character. The default 3D environment is the checked-in [`data/sog/office.sog`](data/sog/office.sog), rendered by Spark.js in Three.js. Elena is **not** part of the scan: her procedural model and articulated gestures remain available in **Inspect Guide**.
 
 ![Split view: the office navigation plan on the left and Elena standing in the captured dining hall on the right](docs/office-walkthrough.jpg)
 
@@ -19,7 +19,7 @@ Open the URL printed by Vite (usually `http://localhost:5173`). The app opens in
 
 - **3D Preview:** drag to orbit, scroll to zoom, or click the floor to walk Elena. Reset the camera to return to the interior starting view.
 - **Virtual Tour:** follow Elena between the dining aisle and window seating. Drag to look around; use WASD or the arrow keys to walk. **Follow Elena** returns to the guided camera.
-- **Inspect Guide:** switch between the full figure, head, hands and feet, or select a gesture.
+- **Inspect Guide:** choose the guide model, inspect the full figure, head, hands or feet, and try a gesture.
 - **2D Plan / Split:** the office plan is a hand-aligned approximation for picking, collision and routing. Editing a wall or moving a table changes that plan and its **Triangle mesh** preview; it does **not** move captured furniture or repaint the SOG.
 - **Spark.js / Gaussian:** see the office and guide splat counts, choose Balanced or Fine detail, or switch to the triangle preview. Wall cutaways apply to the mesh preview, not the scan. The other floorplan presets still generate their own editable 3D architecture.
 
@@ -27,7 +27,7 @@ Open the URL printed by Vite (usually `http://localhost:5173`). The app opens in
 
 1. Open **Insert human** in the header (the person-plus icon on small screens).
 2. Choose **Studio library → Detailed visitor → Insert into scene**. This loads the dressed character from [`data/humans/man-2-unrig.glb`](data/humans/man-2-unrig.glb), in its rest pose. You can also pick this file or your own self-contained model (≤8 MiB) under **Local GLB**. No upload or motion JSON is required.
-3. Look beside Elena: the new person stands on open floor, with a green marker on the plan. To stage someone in a different area, walk Elena there before inserting. Extras are ordinary or skinned meshes in **both** render modes; they do not replace the guide or change the scan.
+3. Look beside Elena: the new person stands on open floor, with a green marker on the plan. To stage someone in a different area, walk Elena there before inserting. Extras are ordinary or skinned meshes in **both** render modes; inserting one does not select it as the guide or change the scan.
 
 **Animate the rigged visitor:** choose **Studio library → Rigged visitor → Insert into scene**, or select [`man-rig.glb`](data/humans/man-rig.glb) under **Local GLB**. The visitor raises his right hand, waves, then settles into a breathing idle next to Elena. For a moving shot, select the rigged visitor, open **Motion JSON → Use walk & greet take**, then insert. The [take](docs/prompts/man-rig.walk-and-greet.json) walks him down the aisle, turns him toward the opening camera, and plays the wave. Reopen **Insert human → Replay** to watch again.
 
@@ -42,6 +42,14 @@ To play the same route on **`man-rig.glb`**, choose **Rigged visitor** or pick t
 To use your own blocking, paste a `planwalk.humans.v1` take or choose **Open JSON**; select the GLBs named in it, matching case. The [authoring guide, schema and two-person example](docs/prompts/human-motion-v1.md) describe the format. For the two-model example use **Local GLB** and select both [`Visitor.glb`](data/humans/Visitor.glb) and your own `Host.glb`.
 
 Reopen the menu to **pause, replay or remove** extras. Insertion is additive, up to **two people besides Elena**. Resetting, switching presets or reloading clears the extras. A rejected import leaves the existing people in place. Check the [model handoff limits](RENDERING.md#additional-human-models) before exporting a GLB.
+
+### Use the rigged visitor as your guide
+
+1. **Insert human → Local GLB → [`man-rig.glb`](data/humans/man-rig.glb) → Insert into scene**, or insert **Studio library → Rigged visitor**. No motion JSON is needed.
+2. Open **Inspect Guide → Guide model** and choose the actor by name and filename. If you inserted the file with Ada’s sample take, choose **Ada · man-rig.glb**. Try **Wave**, then close the inspector and click the floor or start **Virtual Tour**.
+3. To switch back, choose **Elena (default)**. The actor returns to its extra position and take. Removing the active actor also restores Elena.
+
+The selected skin travels with the guide marker and camera in both render modes. Its extra body and marker are hidden while it guides; **Pause humans** and **Replay** affect only extras. See the [feature brief and acceptance checks](docs/prompts/inspect-guide-model.md).
 
 ## Animate your own humanoid GLB
 

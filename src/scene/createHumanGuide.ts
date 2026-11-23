@@ -1140,7 +1140,6 @@ export function createHumanGuide(): HumanGuideController {
   let nextBlinkAt = 2.4;
   let blinkProgress = -1;
   const tempLocalLook = new THREE.Vector3();
-  const invRootQuat = new THREE.Quaternion();
 
   const applyFingerPose = (
     arm: ArmRig,
@@ -1424,9 +1423,7 @@ export function createHumanGuide(): HumanGuideController {
     let targetPitch = Math.sin(elapsed * 0.9) * 0.03;
 
     if (lookTargetWorld && walkBlend < 0.6) {
-      tempLocalLook.copy(lookTargetWorld).sub(root.position);
-      invRootQuat.copy(root.quaternion).invert();
-      tempLocalLook.applyQuaternion(invRootQuat);
+      root.worldToLocal(tempLocalLook.copy(lookTargetWorld));
       tempLocalLook.y -= 1.56; // relative to eye height
 
       if (tempLocalLook.z > 0.15) {
@@ -1505,8 +1502,8 @@ export function createHumanGuide(): HumanGuideController {
         break;
     }
 
-    const focus = localFocus.applyQuaternion(root.quaternion).add(root.position);
-    const camWorld = localCam.applyQuaternion(root.quaternion).add(root.position);
+    const focus = root.localToWorld(localFocus);
+    const camWorld = root.localToWorld(localCam);
     return {
       focus,
       idealCamOffset: camWorld.sub(focus),

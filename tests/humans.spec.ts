@@ -196,12 +196,14 @@ async function stage(page: Page) {
     const source = await (await fetch('/src/scene/humans/cast.ts')).text();
     const T = await load(source.match(/from "([^"]*deps\/three\.js[^"]*)"/)![1]);
     const { HumanCast } = await load('/src/scene/humans/cast.ts');
+    const { TourGuide } = await load('/src/scene/tourGuide.ts');
     const { OFFICE } = await load('/src/data/office.ts');
     const { NavGrid } = await load('/src/utils/pathfinding.ts');
     const blob = await (await fetch('/data/humans/Visitor.glb')).blob();
     const w = window as any;
     w.three = T;
-    w.cast = new HumanCast(new T.Group(), true, (s: unknown) => (w.state = s));
+    w.guide = new TourGuide(true);
+    w.cast = new HumanCast(w.guide, true, (s: unknown) => (w.state = s));
     w.plan = (p: unknown) => w.cast.setNavigation(p, new NavGrid(p));
     w.office = OFFICE;
     w.plan(OFFICE);
@@ -279,6 +281,36 @@ test('take playback is independent, replayable, LOD bounded and releases shared 
   expect(result.kept).toBe(0);
   expect(result.releases).toBe(1);
   expect(result.left).toBe(0);
+});
+
+test('a borrowed guide skin releases only its own palette until the last shared shelf actor leaves', async ({ page }) => {
+  await stage(page);
+  const result = await page.evaluate(async () => {
+    const { cast, guide, plan, office } = window as any;
+    await cast.insert('rigged', '');
+    await cast.insert('rigged', '');
+    const [first, second] = cast.actors;
+    const skin = (root: any) => root.getObjectsByProperty('isSkinnedMesh', true)[0];
+    const sharedMat = skin(first.root).material;
+    let matReleases = 0, paletteReleases = 0;
+    sharedMat.addEventListener('dispose', () => matReleases++);
+    cast.selectGuide(first.spec.id);
+    const borrowed = skin(guide.avatar.root);
+    const independent = borrowed.skeleton.bones !== skin(first.root).skeleton.bones &&
+      guide.avatar.root.getObjectByName('RightHand_49') !== first.root.getObjectByName('RightHand_49');
+    const shared = first.model === second.model && borrowed.material === sharedMat;
+    const palette = borrowed.skeleton;
+    const dispose = palette.dispose.bind(palette);
+    palette.dispose = () => { paletteReleases++; dispose(); };
+    cast.remove(first.spec.id);
+    const kept = matReleases;
+    cast.selectGuide(second.spec.id);
+    plan({ ...office, id: 'different-preset' });
+    return { independent, shared, kept, paletteReleases, matReleases,
+      restored: guide.avatar === guide.elena, people: cast.group.children.length };
+  });
+  expect(result).toEqual({ independent: true, shared: true, kept: 0, paletteReleases: 1,
+    matReleases: 1, restored: true, people: 0 });
 });
 
 test('two-file take checks, edited marks and local-only model validation are atomic', async ({ page }) => {

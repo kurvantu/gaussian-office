@@ -18,8 +18,8 @@ import {
 } from '../types/floorplan';
 import { createFloorMaterialCache } from '../scene/textures';
 import { buildArchitecture, BuiltArchitecture } from '../scene/buildArchitecture';
-import { createHumanGuide, HumanGuideController } from '../scene/createHumanGuide';
-import { HumanCast, type CastState } from '../scene/humans/cast';
+import { TourGuide } from '../scene/tourGuide';
+import { HumanCast, type CastPerson, type CastState } from '../scene/humans/cast';
 import { NavGrid } from '../utils/pathfinding';
 import {
   createGaussianRepresentation,
@@ -41,6 +41,8 @@ import {
 
 interface Scene3DViewportProps {
   castRef: React.RefObject<HumanCast | null>;
+  activeGuide?: CastPerson;
+  inspectDockRef: React.RefObject<HTMLDivElement | null>;
   onCastChange: (state: CastState) => void;
   floorplan: FloorplanData;
   viewMode: ViewMode;
@@ -69,7 +71,7 @@ function angleLerp(current: number, target: number, t: number): number {
 }
 
 export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
-  castRef, onCastChange,
+  castRef, onCastChange, activeGuide, inspectDockRef,
   floorplan,
   viewMode,
   wallMode,
@@ -99,6 +101,10 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
   const [officeError, setOfficeError] = useState<string | null>(null);
   const officeRequest = useRef<AbortController | null>(null);
   const isOffice = floorplan.id === OFFICE.id;
+  const guideName = activeGuide?.label ?? 'Elena';
+  const useElena = !activeGuide;
+  const guideSplatCount = useElena ? splatCounts.guide : 0;
+  const inspectingSkin = !useElena && inspectTarget !== 'none';
   // Office detail changes select LOD nodes; they must not rebuild its navigation proxy.
   const architectureQuality = isOffice ? null : splatQuality;
 
@@ -148,7 +154,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     gaussianArchitecture: GaussianRepresentation | null;
     gaussianGuide: GaussianRepresentation | null;
     controls: OrbitControls;
-    guide: HumanGuideController;
+    guide: TourGuide;
     humanCast: HumanCast;
     guideLight: THREE.PointLight;
     sunLight: THREE.DirectionalLight;
@@ -275,12 +281,19 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     scene.add(guideLight);
 
     const floorCache = createFloorMaterialCache();
-    const guide = createHumanGuide();
+    const mobile = isMobile();
+    const guide = new TourGuide(mobile);
     guide.root.position.set(floorplan.guideStart.x, 0.004, floorplan.guideStart.z);
     guide.root.rotation.y = floorplan.guideStartYaw;
-    guide.triggerWave(3.2);
+    guide.avatar.triggerWave(3.2);
     scene.add(guide.root);
-    const humanCast = new HumanCast(guide.root, isMobile(), onCastChange);
+    const humanCast = new HumanCast(guide, mobile, state => {
+      // Elena's Spark mesh lives in world space, outside the hidden Elena subtree.
+      const splats = engineRef.current?.gaussianGuide;
+      const show = state.guideId === null && propsRef.current.renderMethod === 'gaussian';
+      if (!disposed && splats && splats.mesh.visible !== show) splats.setEnabled(show);
+      onCastChange(state);
+    });
     scene.add(humanCast.group);
     castRef.current = humanCast;
 
@@ -433,7 +446,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     };
     controls.addEventListener('start', handleControlStart);
 
-    // Pointer interaction: hover cursor ring, click-to-walk, click tour marker, click Elena, & tour look-drag
+    // Pointer interaction: hover cursor ring, click-to-walk, click tour marker, inspect the guide, & tour look-drag
     const raycaster = new THREE.Raycaster();
     // Hidden triangle proxies keep picking precise without raycasting the Gaussian cloud.
     raycaster.layers.enable(1);
@@ -504,8 +517,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       raycaster.setFromCamera(pointer, eng.camera);
 
       // Check hover on guide
-      const guideHit = raycaster.intersectObject(eng.guide.root, true);
-      if (guideHit.length > 0 && guideHit[0].object !== eng.guide.root.children[0]) {
+      if (eng.guide.hitTest(raycaster)) {
         hoverRing.visible = false;
         renderer.domElement.style.cursor = 'pointer';
         return;
@@ -545,10 +557,9 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       getNdc(e);
       raycaster.setFromCamera(pointer, eng.camera);
 
-      // 1. Click on Elena -> friendly wave + open anatomy inspector!
-      const guideHit = raycaster.intersectObject(eng.guide.root, true);
-      if (guideHit.length > 0 && guideHit[0].object !== eng.guide.root.children[0]) {
-        eng.guide.triggerWave(3.2);
+      // 1. Click on the guide -> friendly wave + open anatomy inspector!
+      if (eng.guide.hitTest(raycaster)) {
+        eng.guide.avatar.triggerWave(3.2);
         propsRef.current.onInspectTargetChange('full');
         return;
       }
@@ -564,7 +575,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         }
       }
 
-      // 3. Click on walkable floor -> walk Elena cleanly to that spot!
+      // 3. Click on walkable floor -> walk the guide to that spot!
       const floorHit = raycaster.intersectObjects(eng.arch.walkableMeshes, false);
       if (floorHit.length > 0) {
         const pt = floorHit[0].point;
@@ -610,17 +621,6 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
 
-    // Responsive ResizeObserver
-    const ro = new ResizeObserver(() => {
-      if (!container) return;
-      const w = Math.max(1, container.clientWidth);
-      const h = Math.max(1, container.clientHeight);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    });
-    ro.observe(container);
-
     // Main 60fps animation & simulation loop
     const clock = new THREE.Timer();
     clock.connect(document);
@@ -651,7 +651,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
 
       const p = propsRef.current;
 
-      // 1. Advance Elena along A* path waypoints
+      // 1. Advance the guide along A* path waypoints
       const walkSpeed = 1.52; // natural comfortable architectural tour walking pace (m/s)
       const isHoldPose = p.inspectTarget !== 'none';
 
@@ -681,7 +681,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
                 eng.camera.position.z - eng.guide.root.position.z
               );
             }
-            eng.guide.triggerPresent(5.5);
+            eng.guide.avatar.triggerPresent(5.5);
             p.onGuideArrived(eng.activeWalkId, eng.activeWalkTourStopId);
           } else {
             eng.updatePathVisual();
@@ -708,7 +708,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         setGuideStatusLabel(eng.isWalking ? 'Walking to waypoint…' : 'Presenting space');
       }
 
-      // Smoothly turn Elena's body toward desiredYaw
+      // Smoothly turn the guide toward desiredYaw
       eng.guide.root.rotation.y = angleLerp(
         eng.guide.root.rotation.y,
         eng.desiredYaw,
@@ -734,13 +734,13 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
 
       // Determine active animation gesture (auto-pose hands/feet cleanly during close-up inspect!)
       let effectiveGesture: GuideGesture = p.guideGesture;
-      if (effectiveGesture === 'auto') {
+      if (eng.guide.avatar === eng.guide.elena && effectiveGesture === 'auto') {
         if (p.inspectTarget === 'hands') effectiveGesture = 'show_hands';
         else if (p.inspectTarget === 'feet') effectiveGesture = 'show_feet';
       }
 
       tempLookTarget.copy(eng.camera.position);
-      eng.guide.update({
+      eng.guide.avatar.update({
         dt,
         elapsed,
         isWalking: eng.isWalking,
@@ -803,13 +803,13 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
           );
           eng.camera.lookAt(currentTourLookAt);
         } else {
-          // Guided Cinematic Virtual Tour Camera: glides behind Elena while walking, frames room at stop!
+          // Guided Cinematic Virtual Tour Camera: glides behind the guide while walking, frames room at stop!
           const gx = eng.guide.root.position.x;
           const gz = eng.guide.root.position.z;
           const gyaw = eng.guide.root.rotation.y;
 
           if (eng.isWalking) {
-            // Trail gracefully 2.15m behind Elena at 1.62m eye height, respecting walls
+            // Trail gracefully 2.15m behind the guide at 1.62m eye height, respecting walls
             const trailX = gx - Math.sin(gyaw) * 2.1 + Math.cos(gyaw) * 0.28;
             const trailZ = gz - Math.cos(gyaw) * 2.1 - Math.sin(gyaw) * 0.28;
             const safe = eng.navGrid
@@ -832,14 +832,14 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
               p.activeTourStop.cameraLookAt.y,
               p.activeTourStop.cameraLookAt.z
             );
-            // Have Elena softly face between the visitor camera and room focal point
+            // Have the guide softly face between the visitor camera and room focal point
             const toCamYaw = Math.atan2(
               eng.camera.position.x - gx,
               eng.camera.position.z - gz
             );
             eng.desiredYaw = toCamYaw;
           } else {
-            // Stand comfortably facing Elena in her current room
+            // Stand comfortably facing the guide in the current room
             const frontX = gx + Math.sin(gyaw) * 2.15;
             const frontZ = gz + Math.cos(gyaw) * 2.15;
             const safe = eng.navGrid
@@ -945,17 +945,24 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         sparkUpdating = true;
         void eng.spark.update({ scene, camera }).then(() => {
           if (disposed || propsRef.current.renderMethod !== 'gaussian') return;
+          // Spark may still display the last sorted accumulation, even after a source is
+          // hidden or disposed. Never composite that cached Elena with the new skin.
+          const mapping = eng.spark!.display.mapping;
+          const stale = mapping.some(({ node }) => !node.visible || !node.parent);
+          eng.spark!.visible = !stale;
           if (eng.officeEnvironment?.visible) {
             // Decoded is not yet drawable: LOD selection and the first GPU sort
             // can take additional frames. Swap the proxy on the first office draw.
-            const architecture = eng.spark!.display.mapping.find((m) => m.node === eng.officeEnvironment)?.count ?? 0;
+            const architecture = stale ? 0 : (mapping.find(m => m.node === eng.officeEnvironment)?.count ?? 0);
             eng.arch?.setSurfacesVisible(architecture === 0);
             if (now >= nextOfficeStatsAt) {
               nextOfficeStatsAt = now + 500;
               setSplatCounts((prev) => prev.architecture === architecture ? prev : { ...prev, architecture });
             }
           }
+          if (stale) camera.layers.enable(1); // draw the raster navigation proxy until the new sort arrives
           renderer.render(scene, camera);
+          if (stale) camera.layers.disable(1);
           gpuFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
           gl.flush();
           setSparkReady(true);
@@ -974,7 +981,6 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       cancelAnimationFrame(rafId);
       clock.dispose();
       if (gpuFence) gl.deleteSync(gpuFence);
-      ro.disconnect();
       controls.removeEventListener('start', handleControlStart);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
@@ -1006,6 +1012,33 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Frame the imported joints in the space *above* the inspector, including on a split phone screen.
+  useEffect(() => {
+    const eng = engineRef.current, container = containerRef.current;
+    if (!eng || !container) return;
+    const dock = inspectingSkin ? inspectDockRef.current : null;
+    const { camera, renderer } = eng;
+    const size = new THREE.Vector2();
+    const resize = () => {
+      const w = Math.max(1, container.clientWidth), h = Math.max(1, container.clientHeight);
+      if (dock) {
+        const top = Math.min(h * 0.2, w < 480 ? 92 : 44);
+        const bottom = dock.getBoundingClientRect().top - container.getBoundingClientRect().top;
+        camera.setViewOffset(w, Math.max(h * 0.15, bottom - top - 6), 0, -top, w, h);
+      } else {
+        camera.aspect = w / h;
+        camera.clearViewOffset();
+      }
+      renderer.getSize(size);
+      if (size.x !== w || size.y !== h) renderer.setSize(w, h);
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(container);
+    if (dock) ro.observe(dock);
+    return () => ro.disconnect();
+  }, [inspectingSkin, inspectDockRef]);
 
   // Rebuild 3D architecture & A* navgrid instantaneously whenever floorplan changes!
   const prevPlanIdRef = useRef<string>(floorplan.id);
@@ -1050,7 +1083,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       }
     }
 
-    // If switched to a whole new preset floorplan, move Elena to its start position cleanly
+    // If switched to a whole new preset floorplan, move the guide to its start position cleanly
     if (prevPlanIdRef.current !== floorplan.id) {
       prevPlanIdRef.current = floorplan.id;
       eng.pathQueue = [];
@@ -1059,7 +1092,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       eng.guide.root.position.set(floorplan.guideStart.x, 0.004, floorplan.guideStart.z);
       eng.guide.root.rotation.y = floorplan.guideStartYaw;
       eng.desiredYaw = floorplan.guideStartYaw;
-      eng.guide.triggerWave(3.0);
+      eng.guide.avatar.triggerWave(3.0);
       eng.resetOrbitView();
       setFreeRoamInTour(false);
     }
@@ -1103,22 +1136,26 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     });
   }, [isOffice, renderMethod, sparkError]);
 
+  const sampledQuality = useRef<SplatQuality | null>(null);
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng?.spark) return;
     eng.spark.lodSplatCount = officeLodBudget(splatQuality);
+    // Keep Elena ready to return. Do not resample a hidden guide (or touch the imported skin).
+    if (!useElena || (eng.gaussianGuide && sampledQuality.current === splatQuality)) return;
     eng.gaussianGuide?.dispose();
     eng.gaussianGuide = null;
     try {
-      const gaussians = createGaussianRepresentation(eng.guide.root, 'guide', splatQuality);
+      const gaussians = createGaussianRepresentation(eng.guide.elena.root, 'guide', splatQuality);
       eng.gaussianGuide = gaussians;
+      sampledQuality.current = splatQuality;
       eng.scene.add(gaussians.mesh);
-      gaussians.setEnabled(propsRef.current.renderMethod === 'gaussian');
+      gaussians.setEnabled(eng.guide.elena.root.visible && propsRef.current.renderMethod === 'gaussian');
       gaussians.setLighting(propsRef.current.lighting);
       setSplatCounts((previous) => ({ ...previous, guide: gaussians.count }));
       void gaussians.ready.catch((error) => {
         console.error('Could not prepare guide splats:', error);
-        if (engineRef.current === eng) {
+        if (engineRef.current === eng && eng.gaussianGuide === gaussians && eng.guide.elena.root.visible) {
           setSparkError('The Gaussian guide could not be initialized. The triangle preview is available.');
           setRenderMethod('triangles');
         }
@@ -1128,7 +1165,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       setSparkError('The Gaussian guide could not be generated. The triangle preview is available.');
       setRenderMethod('triangles');
     }
-  }, [splatQuality]);
+  }, [splatQuality, useElena]);
 
   useEffect(() => {
     const eng = engineRef.current;
@@ -1137,7 +1174,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
     if (eng.officeEnvironment) eng.officeEnvironment.visible = gaussian;
     if (!gaussian) eng.arch?.setSurfacesVisible(true);
     eng.gaussianArchitecture?.setEnabled(gaussian);
-    eng.gaussianGuide?.setEnabled(gaussian);
+    eng.gaussianGuide?.setEnabled(eng.guide.elena.root.visible && gaussian);
     if (eng.spark) eng.spark.visible = gaussian;
     eng.renderer.shadowMap.enabled = !gaussian;
     eng.renderer.domElement.dataset.renderer = gaussian ? 'spark' : 'triangles';
@@ -1145,8 +1182,8 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
 
   useEffect(() => {
     const eng = engineRef.current;
-    if (eng) eng.renderer.domElement.dataset.splatCount = String(splatCounts.architecture + splatCounts.guide);
-  }, [splatCounts]);
+    if (eng) eng.renderer.domElement.dataset.splatCount = String(splatCounts.architecture + guideSplatCount);
+  }, [splatCounts.architecture, guideSplatCount]);
 
   // Apply Lighting Preset transitions
   useEffect(() => {
@@ -1221,7 +1258,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
 
     if (viewMode === 'tour') {
       setFreeRoamInTour(false);
-      eng.guide.triggerWave(2.8);
+      if (eng.guide.avatar === eng.guide.elena) eng.guide.elena.triggerWave(2.8);
     } else if (prev === 'tour' && inspectTarget === 'none') {
       eng.resetOrbitView();
     }
@@ -1242,18 +1279,18 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
       return;
     }
 
-    // Pause active walk so Elena holds a poised, crystal-clear inspection stance
-    const anchor = eng.guide.getInspectAnchorWorld(inspectTarget);
+    // Pause active walk so the guide holds a poised, crystal-clear inspection stance
+    const anchor = eng.guide.avatar.getInspectAnchorWorld(inspectTarget);
     const desiredPos = anchor.focus.clone().add(anchor.idealCamOffset);
     eng.camTransition = {
       active: true,
       pos: desiredPos,
       target: anchor.focus.clone(),
     };
-    if (inspectTarget === 'full') {
-      eng.guide.triggerWave(2.8);
+    if (inspectTarget === 'full' && eng.guide.avatar === eng.guide.elena) {
+      eng.guide.elena.triggerWave(2.8);
     }
-  }, [inspectTarget, viewMode]);
+  }, [inspectTarget, viewMode, activeGuide?.id]);
 
   const cycleLighting = () => {
     const next: LightingPreset =
@@ -1285,7 +1322,7 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
               : viewMode === 'tour'
               ? freeRoamInTour
                 ? 'Virtual Tour · Free Walk'
-                : 'Virtual Tour · Following Elena'
+                : `Virtual Tour · Following ${guideName}`
               : isOffice && renderMethod === 'gaussian'
               ? '3D Office Capture'
               : '3D Architectural Preview'}
@@ -1300,7 +1337,8 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
         <RenderSettings
           method={renderMethod}
           quality={splatQuality}
-          counts={splatCounts}
+          counts={{ architecture: splatCounts.architecture, guide: guideSplatCount }}
+          skinnedGuide={!!activeGuide}
           office={isOffice}
           ready={sparkReady && (!isOffice || splatCounts.architecture > 0)}
           error={sparkError ?? (isOffice ? officeError : null)}
@@ -1315,10 +1353,10 @@ export const Scene3DViewport: React.FC<Scene3DViewportProps> = ({
           <button
             onClick={() => setFreeRoamInTour(false)}
             className="studio-glass rounded-full px-3 py-1.5 text-xs font-semibold text-[#C85A32] hover:bg-white transition flex items-center gap-1.5 cursor-pointer"
-            title="Smoothly re-follow Elena the 3D tour guide"
+            title={`Return to the camera following ${guideName}`}
           >
             <Eye className="w-3.5 h-3.5" />
-            <span>Follow Elena</span>
+            <span>Follow {guideName}</span>
           </button>
         )}
 

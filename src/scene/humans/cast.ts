@@ -3,22 +3,31 @@ import { library, type LibraryId } from './library';
 import type { FloorplanData, Point2D } from '../../types/floorplan';
 import type { NavGrid } from '../../utils/pathfinding';
 import { HumanActor } from './actor';
-import { disposeModel, loadModel, type GenerateMotion, type HumanModel } from './model';
+import type { TourGuide } from '../tourGuide';
+import { disposeModel, guideIssue, loadModel, type GenerateMotion, type HumanModel } from './model';
 import { MAX_ACTORS, nearbyMark, readTake, type ActorSpec, type ModelSpec, type Navigation } from './take';
 
+export interface CastPerson {
+  id: string;
+  label: string;
+  file: string;
+  guideIssue: string | null;
+}
 export interface CastState {
-  people: { id: string; label: string; file: string }[];
+  people: CastPerson[];
+  guideId: string | null;
   paused: boolean;
   problem: string | null;
 }
-export const emptyCast: CastState = { people: [], paused: false, problem: null };
+export const emptyCast: CastState = { people: [], guideId: null, paused: false, problem: null };
 export type ModelSource = LibraryId | File[];
 
-/** Viewport-owned session; nothing here owns or animates the guide, architecture or capture. */
+/** Owns inserted models and extra takes; the selected guide only borrows a prepared model. */
 export class HumanCast {
   readonly group = new T.Group();
   markers: { label: string; position: Point2D }[] = [];
   private actors: HumanActor[] = [];
+  private guideActor: HumanActor | null = null;
   private readonly shelfOrigins = new WeakMap<HumanModel, LibraryId>();
   private nav?: Navigation;
   private pending?: AbortController;
@@ -26,17 +35,39 @@ export class HumanCast {
   private problem: string | null = null;
 
   constructor(
-    private guide: T.Object3D,
+    private readonly guide: TourGuide,
     private mobile: boolean,
     private onChange: (state: CastState) => void
   ) {
     this.group.name = 'Inserted_humans';
   }
 
+  private get extras() { return this.actors.filter(a => a !== this.guideActor); }
+
+  private changeGuide(actor: HumanActor | null) {
+    this.guide.setModel(actor?.model ?? null);
+    if (this.guideActor) this.guideActor.root.visible = true;
+    this.guideActor = actor;
+    if (actor) actor.root.visible = false;
+  }
+
+  selectGuide(id: string | null) {
+    if (id === (this.guideActor?.spec.id ?? null)) return;
+    const actor = this.actors.find(a => a.spec.id === id);
+    if (id !== null && !actor) throw new Error('That actor is no longer in the scene.');
+    this.changeGuide(actor ?? null);
+    // Check any plan edits missed by the returning extra before resuming its clock.
+    this.revalidate(false);
+    this.publish();
+  }
+
+  waveGuide() { this.guide.avatar.triggerWave(); }
+
   private publish() {
-    this.markers = this.actors.map((a) => ({ label: a.label, position: a.root.position }));
+    this.markers = this.extras.map((a) => ({ label: a.label, position: a.root.position }));
     this.onChange({
-      people: this.actors.map((a) => ({ id: a.spec.id, label: a.label, file: a.asset.file })),
+      people: this.actors.map((a) => ({ id: a.spec.id, label: a.label, file: a.asset.file, guideIssue: guideIssue(a.model) })),
+      guideId: this.guideActor?.spec.id ?? null,
       paused: this.paused,
       problem: this.problem,
     });
@@ -48,14 +79,17 @@ export class HumanCast {
     this.revalidate();
   }
 
-  private revalidate() {
-    if (!this.actors.length || !this.nav) return;
+  private revalidate(restartTogether = true) {
+    const nav = this.nav;
+    if (!this.actors.length || !nav) return;
     const previous = this.problem;
     try {
-      let changed = false;
-      for (const a of this.actors) if (a.rebuildRoutes(this.nav)) changed = true;
+      const extras = this.extras;
+      const changed = extras.filter(a => a.rebuildRoutes(nav));
       this.problem = null;
-      if (changed || previous) this.actors.forEach((a) => a.replay());
+      // Edits restart a coordinated take. Changing roles alone must not rewind other extras.
+      const restart = restartTogether && (changed.length || previous) ? extras : changed;
+      restart.forEach(a => a.replay());
     } catch (e) {
       this.paused = true;
       this.problem = `Plan changed. ${e instanceof Error ? e.message : 'A mark is no longer reachable.'} Undo the edit or remove the human.`;
@@ -148,7 +182,7 @@ export class HumanCast {
             n = 1;
           while (taken.has(id)) id = `${stem}-${++n}`;
           taken.add(id);
-          const spawn = nearbyMark(this.guide.position, this.guide.rotation.y, occupied, this.nav!);
+          const spawn = nearbyMark(this.guide.root.position, this.guide.root.rotation.y, occupied, this.nav!);
           occupied.push(spawn);
           return { id, model, spawn, steps: preview ? [{ op: 'play', clip: preview.openingClip }] : [] };
         });
@@ -181,20 +215,21 @@ export class HumanCast {
 
   update(dt: number, camera: T.Vector3) {
     for (const actor of this.actors) {
+      if (actor === this.guideActor) continue;
       if (!this.paused) actor.update(dt);
       actor.updateLod(actor.root.position.distanceTo(camera), this.mobile);
     }
   }
 
   togglePause() {
-    if (!this.problem) {
+    if (!this.problem && this.extras.length) {
       this.paused = !this.paused;
       this.publish();
     }
   }
   replay() {
-    if (!this.problem) {
-      this.actors.forEach((a) => a.replay());
+    if (!this.problem && this.extras.length) {
+      this.extras.forEach((a) => a.replay());
       this.paused = false;
       this.publish();
     }
@@ -204,6 +239,7 @@ export class HumanCast {
     this.cancelInsert();
     const actor = this.actors.find((a) => a.spec.id === id);
     if (!actor) return;
+    if (actor === this.guideActor) this.changeGuide(null);
     actor.dispose();
     this.actors = this.actors.filter((a) => a !== actor);
     if (!this.actors.some((a) => a.model === actor.model)) disposeModel(actor.model);
@@ -216,6 +252,7 @@ export class HumanCast {
 
   clear() {
     this.cancelInsert();
+    if (this.guideActor) this.changeGuide(null);
     const models = new Set(this.actors.map((a) => a.model));
     this.actors.forEach((a) => a.dispose());
     models.forEach(disposeModel);

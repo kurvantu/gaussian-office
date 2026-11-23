@@ -7,13 +7,14 @@ interface RenderSettingsProps {
   quality: SplatQuality;
   counts: { architecture: number; guide: number };
   office: boolean;
+  skinnedGuide: boolean;
   ready: boolean;
   error: string | null;
   onMethodChange: (method: RenderMethod) => void;
   onQualityChange: (quality: SplatQuality) => void;
 }
 
-export function RenderSettings({ method, quality, counts, office, ready, error, onMethodChange, onQualityChange }: RenderSettingsProps) {
+export function RenderSettings({ method, quality, counts, office, skinnedGuide, ready, error, onMethodChange, onQualityChange }: RenderSettingsProps) {
   const [open, setOpen] = useState(false);
   const gaussian = method === 'gaussian';
   const count = counts.architecture + counts.guide;
@@ -58,7 +59,7 @@ export function RenderSettings({ method, quality, counts, office, ready, error, 
             <div className="space-y-1" role="group" aria-label="Rendering method">
               {([
                 { value: 'gaussian', label: 'Gaussian splatting', detail: 'Spark.js anisotropic 3D Gaussians', icon: CircleDot },
-                { value: 'triangles', label: 'Triangle mesh', detail: office ? 'Navigation plan + original guide' : 'Original Three.js rasterized preview', icon: Box },
+                { value: 'triangles', label: 'Triangle mesh', detail: office ? 'Navigation plan + tour guide' : 'Original Three.js rasterized preview', icon: Box },
               ] as const).map((item) => (
                 <button
                   key={item.value}
@@ -76,7 +77,7 @@ export function RenderSettings({ method, quality, counts, office, ready, error, 
 
             {gaussian && (
               <div className="mt-3 border-t border-black/10 pt-3">
-                <div className="mb-2 flex items-center justify-between text-[10px] text-[#6B6860]"><span className="font-semibold uppercase tracking-wider">Sampling Quality</span><span>{office ? 'Office LOD + guide detail' : 'Live, editable scene'}</span></div>
+                <div className="mb-2 flex items-center justify-between text-[10px] text-[#6B6860]"><span className="font-semibold uppercase tracking-wider">Sampling Quality</span><span>{office ? (skinnedGuide ? 'Office LOD' : 'Office LOD + guide detail') : 'Live, editable scene'}</span></div>
                 <div className="grid grid-cols-2 gap-1 rounded-lg bg-black/5 p-1" role="group" aria-label="Gaussian sampling quality">
                   {(['balanced', 'fine'] as const).map((value) => (
                     <button key={value} onClick={() => onQualityChange(value)} aria-pressed={quality === value} className={`cursor-pointer rounded-md py-1.5 text-[11px] font-semibold capitalize transition ${quality === value ? 'bg-white text-[#1C1B19] shadow-sm' : 'text-[#6B6860] hover:text-[#1C1B19]'}`}>{value === 'fine' ? 'Fine detail' : 'Balanced'}</button>
@@ -84,12 +85,12 @@ export function RenderSettings({ method, quality, counts, office, ready, error, 
                 </div>
                 <dl className="font-mono-tech mt-3 space-y-1 text-[10px] text-[#57534E]">
                   <div className="flex justify-between"><dt>{office ? 'Office (selected LOD)' : 'Architecture'}</dt><dd>{number.format(counts.architecture)} splats</dd></div>
-                  <div className="flex justify-between"><dt>Articulated guide</dt><dd>{number.format(counts.guide)} splats</dd></div>
+                  <div className="flex justify-between"><dt>Articulated guide</dt><dd>{skinnedGuide ? 'Skinned mesh' : `${number.format(counts.guide)} splats`}</dd></div>
                 </dl>
                 <p className="mt-2 text-[10px] leading-relaxed text-[#6B6860]">
                   {office ? (
                     <>
-                      The office is a fixed SOG capture. Plan edits change navigation and the triangle preview, not the scan. Elena keeps her animated joints.
+                      The office is a fixed SOG capture. Plan edits change navigation and the triangle preview, not the scan. The animated guide is rendered separately.
                       <br />
                       <a className="underline" href="https://superspl.at/scene/40c67340" target="_blank" rel="noreferrer">Capture by Hilo</a>
                       {' · '}
