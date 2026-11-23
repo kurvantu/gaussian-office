@@ -110,5 +110,5 @@ export function nearbyMark(anchor: Point2D, yaw: number, occupied: Point2D[], na
         return { ...p, yawDeg: (yaw * 180) / Math.PI };
       }
     }
-  throw new Error('No clear floor space near Elena. Move the guide to an open area and try again.');
+  throw new Error('No clear floor space near the guide. Move the guide to an open area and try again.');
 }

@@ -12,6 +12,7 @@ import {
 
 interface TourDockProps {
   stops: TourStop[];
+  guideName: string;
   activeIndex: number | null;
   isPlaying: boolean;
   isArrivedAtStop: boolean;
@@ -26,6 +27,7 @@ interface TourDockProps {
 
 export const TourDock: React.FC<TourDockProps> = ({
   stops,
+  guideName,
   activeIndex,
   isPlaying,
   isArrivedAtStop,
@@ -74,11 +76,11 @@ export const TourDock: React.FC<TourDockProps> = ({
   // Expanded Architectural Guide Narration Card
   return (
     <div className="pointer-events-auto studio-glass rounded-2xl p-3.5 w-[min(460px,92vw)] shadow-xl">
-      {/* Header Row: Elena Host Avatar + Stop Counter + Controls */}
+      {/* Header Row: Guide Avatar + Stop Counter + Controls */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <div className="relative w-7 h-7 rounded-full bg-[#3D5A52] text-white flex items-center justify-center text-[11px] font-bold shrink-0">
-            E
+            {guideName[0]}
             <span
               className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
                 isArrivedAtStop ? 'bg-emerald-500' : 'bg-[#C85A32] animate-pulse'
@@ -92,7 +94,7 @@ export const TourDock: React.FC<TourDockProps> = ({
               </span>
               <span className="text-black/20">·</span>
               <span className="text-[11px] text-[#6B6860] truncate">
-                {isArrivedAtStop ? 'Elena · Presenting' : 'Elena · Walking to room…'}
+                {guideName} · {isArrivedAtStop ? 'Presenting' : 'Walking to room…'}
               </span>
             </div>
             <h3 className="text-sm font-bold text-[#1C1B19] leading-tight truncate">

@@ -77,6 +77,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
   const full = state.people.length >= MAX_ACTORS;
+  const hasExtras = state.people.some(p => p.id !== state.guideId);
   const localFile = source === 'file' && files.length === 1 ? files[0] : undefined;
   useEffect(() => {
     if (!office || !localFile || generate) return;
@@ -358,8 +359,8 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
               : text.trim()
                 ? 'The take sets the starting marks and motion.'
                 : openingWave
-                  ? 'Greets you with a wave beside Elena, then idles. No motion JSON needed.'
-                  : 'Placed on open floor near Elena, facing the same direction.'}
+                  ? 'Greets you with a wave beside the guide, then idles. No motion JSON needed.'
+                  : 'Placed on open floor near the guide, facing the same direction.'}
           </p>
           {office && (
             <details className="group mt-3 rounded-xl border border-black/10 bg-white px-3">
@@ -448,7 +449,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold">In this scene</h3>
             <span className="font-mono-tech text-[10px] text-[#65685f]">
-              {state.people.length} / {MAX_ACTORS} extras
+              {state.people.length} / {MAX_ACTORS} {state.guideId ? 'cast slots' : 'extras'}
             </span>
           </div>
           {!state.people.length ? (
@@ -465,6 +466,9 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                     <span className="min-w-0 flex-1 truncate text-xs">
                       <strong>{p.label}</strong> <span className="text-[#6b6860]">· {p.file}</span>
                     </span>
+                    {p.id === state.guideId && (
+                      <span className="shrink-0 rounded-full bg-[#e6efe8] px-2 py-0.5 text-[10px] font-semibold text-[#345447]">Active guide</span>
+                    )}
                     <button
                       className={smallButton}
                       disabled={busy}
@@ -483,7 +487,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
               <div className="mt-1 flex gap-1">
                 <button
                   className={smallButton}
-                  disabled={!!state.problem || busy}
+                  disabled={!hasExtras || !!state.problem || busy}
                   onClick={() => cast.current?.togglePause()}
                 >
                   {state.paused ? <Play size={12} /> : <Pause size={12} />}
@@ -491,7 +495,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                 </button>
                 <button
                   className={smallButton}
-                  disabled={!!state.problem || busy}
+                  disabled={!hasExtras || !!state.problem || busy}
                   onClick={() => cast.current?.replay()}
                 >
                   <RotateCcw size={12} />
@@ -506,7 +510,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                       setError('');
                     }}
                   >
-                    Clear extras
+                    {state.guideId ? 'Clear cast' : 'Clear extras'}
                   </button>
                 )}
               </div>

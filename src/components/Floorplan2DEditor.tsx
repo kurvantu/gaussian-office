@@ -966,7 +966,7 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
         ctx.restore();
       }
 
-      // Extra people are markers only; the tour and floor-click target remain Elena.
+      // Extra people are markers only; they never own tour navigation.
       for (const { label, position } of sync.extraHumans) {
         ctx.save();
         ctx.translate(wx(position.x), wz(position.z));
@@ -981,7 +981,7 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
         ctx.restore();
       }
 
-      // Elena live position + heading direction wedge
+      // Guide live position + heading direction wedge
       {
         const gAng = Math.PI * 0.5 - sync.guideYaw;
         const pulse = 1 + Math.sin(now * 0.004) * 0.14;
@@ -1401,7 +1401,7 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (compact) return;
-    // Convenient double-click anywhere on the 2D floorplan walks Elena directly there!
+    // Convenient double-click anywhere on the 2D floorplan walks the guide directly there!
     const rect = e.currentTarget.getBoundingClientRect();
     const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     onWalkGuideTo(world);
@@ -1455,7 +1455,7 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
           ref={canvasRef}
           onPointerDown={handlePointerDown}
           className="block w-full h-full cursor-pointer"
-          title="Click any room on the 2D floorplan to walk Elena there"
+          title="Click any room on the 2D floorplan to walk the guide there"
         />
         <div className="pointer-events-none absolute top-2 left-2.5 text-[10px] font-semibold tracking-wide uppercase text-[#57534E]">
           2D Live Radar
@@ -1778,7 +1778,7 @@ export const Floorplan2DEditor: React.FC<Floorplan2DEditorProps> = ({
       {/* Active Tool Helper Toast when drawing/walking */}
       {activeTool !== 'select' && activeTool !== 'furniture' && (
         <div className="pointer-events-none absolute bottom-3 left-3 studio-glass rounded-full px-3 py-1.5 text-[11px] font-medium text-[#1C1B19]">
-          {activeTool === 'walk' && 'Click anywhere inside the blueprint to walk Elena there'}
+          {activeTool === 'walk' && 'Click anywhere inside the blueprint to walk the guide there'}
           {activeTool === 'wall' && 'Click start & end points to draw a snapped 3D wall (Esc cancels)'}
           {activeTool === 'door' && 'Hover a wall and click to insert a walkable 3D doorway'}
           {activeTool === 'window' && 'Hover a wall and click to insert a glazed 3D window'}

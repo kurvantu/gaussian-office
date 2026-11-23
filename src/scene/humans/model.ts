@@ -10,6 +10,7 @@ import {
   parseBoneMap,
   RigError,
   type BoneMap,
+  type HumanoidRig,
 } from '../../../packages/humanoid-motion/src/index';
 import {
   glbJsonLength,
@@ -36,11 +37,51 @@ export async function embeddedClipNames(file: File): Promise<string[] | null> {
   }
 }
 
+export interface GuideBinding {
+  rig: HumanoidRig; // resolved at rest (also retains any custom bone map)
+  bounds: T.Box3;
+}
 export interface HumanModel {
   scene: T.Group;
   animations: T.AnimationClip[];
   generatedLods?: GeometryLods;
+  guideBinding?: GuideBinding;
   previewMotion?: { idleClip: string; openingClip: string };
+}
+
+const playable = (clip: T.AnimationClip) => clip.tracks.length > 0 && Number.isFinite(clip.duration) && clip.duration > 0;
+const missingGuideClips = (model: HumanModel) => Object.values(CLIPS).filter(name =>
+  !model.animations.some(clip => clip.name === name && playable(clip)));
+
+export function guideIssue(model: HumanModel): string | null {
+  if (model.guideBinding) return null;
+  const missing = missingGuideClips(model);
+  return missing.length ? `Missing guide clips: ${missing.join(', ')}.` : 'Guide clips must animate a mapped humanoid skin.';
+}
+
+/** Author motion only on opt-in / the known clipless visitor. A baked file can guide
+ * without generating over its clips, but they must bind to this actual skin. */
+function prepareMotion(model: HumanModel, bounds: T.Box3, file: string, generate?: GenerateMotion) {
+  const shelfGreeting = isCliplessRiggedVisitor(file, model.animations.length);
+  const author = !!generate || shelfGreeting;
+  if (!author && missingGuideClips(model).length) return;
+  try {
+    const profile = shelfGreeting && !generate ? parseBoneMap(visitorMap) : generate?.profile;
+    const rig = bindHumanoid(model.scene, profile);
+    if (author) {
+      model.animations.push(...createHumanoidClips(rig, model.animations));
+      model.previewMotion = { idleClip: CLIPS.idle, openingClip: CLIPS.wave };
+    }
+    const joints = new Set(Object.values(rig.joints).map(j => j.name));
+    const bound = Object.values(CLIPS).every(name => {
+      const clips = model.animations.filter(clip => clip.name === name);
+      return clips.length === 1 && clips[0].tracks.some(t => joints.has(T.PropertyBinding.parseTrackName(t.name).nodeName));
+    });
+    if (bound) model.guideBinding = { rig, bounds };
+  } catch (e) {
+    // Ineligible for guiding is not a reason to reject a normal extra.
+    if (generate || !(e instanceof RigError)) throw e;
+  }
 }
 
 // Only the Studio enforces these texture/render budgets. The reusable rig library
@@ -259,6 +300,7 @@ async function inspect(model: HumanModel, signal: AbortSignal) {
     model.generatedLods = new Map();
     await buildDetailLods(levels[0], model.generatedLods, signal);
   }
+  return box;
 }
 
 /** Own only imported assets. Mesh instances share these resources until the last user is gone. */
@@ -321,19 +363,9 @@ export async function loadModel(
     model = { scene: gltf.scene, animations: gltf.animations };
     signal.throwIfAborted();
     if (imageError) throw new Error('Could not decode an embedded texture.');
-    await inspect(model, signal);
+    const bounds = await inspect(model, signal);
     signal.throwIfAborted();
-    if (generate || isCliplessRiggedVisitor(file.name, model.animations.length)) {
-      try {
-        // Explicit generation works on ANY filename. The old automatic shelf greeting
-        // stays opt-in by its exact profile for backwards compatibility.
-        const rig = bindHumanoid(model.scene, generate ? generate.profile : parseBoneMap(visitorMap));
-        model.animations.push(...createHumanoidClips(rig, model.animations));
-        model.previewMotion = { idleClip: CLIPS.idle, openingClip: CLIPS.wave };
-      } catch (e) {
-        if (generate || !(e instanceof RigError)) throw e;
-      }
-    }
+    prepareMotion(model, bounds, file.name, generate);
     return model;
   } catch (error) {
     if (model) disposeModel(model);
