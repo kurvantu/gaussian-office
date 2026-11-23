@@ -1,0 +1,20 @@
+{
+  "format": "planwalk.humanoid-rig.v1",
+  "bones": {
+    "hips": "Hips",
+    "chest": "Chest",
+    "head": "Head",
+    "leftUpperArm": "Shoulder_L",
+    "leftLowerArm": "Elbow_L",
+    "leftHand": "Wrist_L",
+    "rightUpperArm": "Shoulder_R",
+    "rightLowerArm": "Elbow_R",
+    "rightHand": "Wrist_R",
+    "leftUpperLeg": "Hip_L",
+    "leftLowerLeg": "Knee_L",
+    "leftFoot": "Ankle_L",
+    "rightUpperLeg": "Hip_R",
+    "rightLowerLeg": "Knee_R",
+    "rightFoot": "Ankle_R"
+  }
+}

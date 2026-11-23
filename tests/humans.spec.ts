@@ -715,3 +715,57 @@ test('man-rig drives weighted vertices, plants its feet, and replays on its own 
   expect(r.mismatch).toContain('no playable clip “EasyIdle”');
   expect(r.explicitRest).toBeLessThan(0.0001);
 });
+
+test('a custom GLB can generate humanoid motion by role map; a failed bind leaves the scene untouched', async ({
+  page,
+}) => {
+  // An existing skinned character with its own clips and an artist-specific joint name.
+  // Keep the original BIN and node indices intact, including the existing animation targets.
+  const jsonEnd = 20 + fixture.readUInt32LE(12),
+    doc = JSON.parse(fixture.subarray(20, jsonEnd).toString());
+  const hand = 'Character:Grip.R 007';
+  doc.nodes.find((n: any) => n.name === 'Wrist_R').name = hand;
+  const json = Buffer.from(JSON.stringify(doc)),
+    size = Math.ceil(json.length / 4) * 4;
+  const bytes = Buffer.concat([
+    fixture.subarray(0, 20),
+    json,
+    Buffer.alloc(size - json.length, 32),
+    fixture.subarray(jsonEnd),
+  ]);
+  bytes.writeUInt32LE(size, 12);
+  bytes.writeUInt32LE(bytes.length, 8);
+  await page.setViewportSize({ width: 980, height: 640 });
+  await page.goto('/');
+  await expect(page.locator('canvas[data-renderer]')).toBeVisible();
+  await trigger(page).click();
+  await page.getByRole('button', { name: 'Local GLB', exact: true }).click();
+  await page
+    .getByLabel('Human GLB files')
+    .setInputFiles({ name: 'Guest.glb', mimeType: 'model/gltf-binary', buffer: bytes });
+  const generate = page.getByRole('checkbox', { name: 'Generate humanoid motion' });
+  await expect(generate).not.toBeChecked();
+  await generate.check();
+  await insert(page).click();
+  await expect(page.getByRole('alert')).toContainText('rightHand: not recognized');
+  expect((await people(page)).actors).toHaveLength(0);
+  await page.locator('summary').filter({ hasText: 'Rig requirements' }).click();
+  await page
+    .getByLabel('Open bone map file')
+    .setInputFiles({
+      name: 'Guest.rig.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ format: 'planwalk.humanoid-rig.v1', bones: { rightHand: hand } })),
+    });
+  await expect(page.getByLabel('Bone map JSON', { exact: false })).toContainText(hand);
+  await page.locator('summary').filter({ hasText: 'Motion JSON' }).click();
+  await page.getByRole('button', { name: 'Use walk & greet take' }).click();
+  expect(
+    JSON.parse(await page.getByRole('textbox', { name: 'Motion JSON' }).inputValue()).models.rig.file
+  ).toBe('Guest.glb');
+  await insert(page).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const scene = await people(page);
+  expect(scene.actors.map((a: any) => a.id)).toEqual(['Human_greeter']);
+  expect(scene.error).toBe(0);
+});

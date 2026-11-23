@@ -1,0 +1,40 @@
+{
+  "name": "@planwalk/humanoid-motion",
+  "version": "1.0.0",
+  "description": "Bind a skinned Three.js biped by anatomical roles and author portable glTF motions.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/glb.d.ts",
+      "node": "./dist/glb.js"
+    }
+  },
+  "bin": {
+    "humanoid-motion": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "bone-map.schema.json",
+    "README.md",
+    "GLB-CONTRACT.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "@types/node": "^22.19.17",
+    "typescript": "~5.9.3"
+  },
+  "private": true
+}

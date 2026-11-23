@@ -4,7 +4,6 @@ import animatedUrl from '../../../data/humans/Visitor.glb?url&no-inline';
 import detailedPortrait from '../../assets/detailed-visitor.webp';
 import riggedPortrait from '../../assets/rigged-visitor.webp';
 import animatedPortrait from '../../assets/visitor-preview.webp';
-import { RIG_FILE } from './rigMotion';
 
 export const library = {
   visitor: {
@@ -19,7 +18,7 @@ export const library = {
   rigged: {
     title: 'Rigged visitor',
     actorId: 'rigged-visitor',
-    file: RIG_FILE,
+    file: 'man-rig.glb',
     url: riggedUrl,
     idleClip: undefined,
     portrait: riggedPortrait,

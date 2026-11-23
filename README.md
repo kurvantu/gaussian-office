@@ -39,6 +39,14 @@ The uploaded GLB has a skin but no embedded clips. PlanWalk authors `WelcomeWave
 
 Reopen the menu to **pause, replay or remove** extras. Insertion is additive, up to **two people besides Elena**. Resetting, switching presets or reloading clears the extras. A rejected import leaves the existing people in place. Check the [model handoff limits](RENDERING.md#additional-human-models) before exporting a GLB.
 
+## Animate your own humanoid GLB
+
+Choose **Insert human → Local GLB**, select your character, and check **Generate humanoid motion**. A compatible rig waves, idles and can follow **Motion JSON → Use walk & greet take**. No particular filename or embedded animations are required. Automatic matching handles common anatomical, Mixamo-style and Blender left/right names. For custom names, open **Rig requirements & optional bone map** and supply exact source-joint names. Generation is opt-in; existing clips stay intact.
+
+- **For artists:** [GLB contract, the 15 required roles and export checklist](packages/humanoid-motion/GLB-CONTRACT.md). A static mesh needs to be skinned first.
+- **For developers:** [standalone Three.js library, install instructions, API and custom action example](packages/humanoid-motion/README.md). No office assets or renderer dependency. `npm run test:humanoid` exercises binding, animation and GLB export outside the viewer.
+- **Offline:** `npm run --silent humanoid -- inspect MyHuman.glb` checks a rig. `npm run --silent humanoid -- bake MyHuman.glb MyHuman-moving.glb` writes a new portable GLB. Both accept `--map MyHuman.rig.json`. Try `inspect data/humans/Visitor.glb` for a second rig with different proportions, joint names and existing clips.
+
 ## Build and verify
 
 ```sh

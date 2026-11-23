@@ -1,0 +1,20 @@
+{
+  "format": "planwalk.humanoid-rig.v1",
+  "bones": {
+    "hips": "Hips_66",
+    "chest": "Spine2_53",
+    "head": "Head_3",
+    "leftUpperArm": "LeftArm_27",
+    "leftLowerArm": "LeftForeArm_26",
+    "leftHand": "LeftHand_25",
+    "rightUpperArm": "RightArm_51",
+    "rightLowerArm": "RightForeArm_50",
+    "rightHand": "RightHand_49",
+    "leftUpperLeg": "LeftUpLeg_60",
+    "leftLowerLeg": "LeftLeg_59",
+    "leftFoot": "LeftFoot_58",
+    "rightUpperLeg": "RightUpLeg_65",
+    "rightLowerLeg": "RightLeg_64",
+    "rightFoot": "RightFoot_63"
+  }
+}
