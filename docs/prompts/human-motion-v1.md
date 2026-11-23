@@ -40,7 +40,7 @@ Same input, but ask Fern to walk to office-aisle instead:
 
 ### Rigged visitor inventory
 
-For **Rigged visitor** (`man-rig.glb`), the viewer supplies `EasyIdle`, `HallwayWalk_IP` (in-place at **1.2 m/s**) and one-shot `WelcomeWave` on the uploaded skeleton. These clips are authored by PlanWalk, not embedded in the original file. The [walk & greet take](man-rig.walk-and-greet.json) runs from the menu with either the library model or the matching local GLB. Do not use Ada’s `Visitor.glb` clip names for this rig.
+For **Rigged visitor** (`man-rig.glb`), the viewer supplies `EasyIdle`, `HallwayWalk_IP` (in-place at **1.2 m/s**) and one-shot `WelcomeWave` on the uploaded skeleton. These clips are authored by PlanWalk, not embedded in the original file. The [walk & greet take](man-rig.walk-and-greet.json) runs from the menu with either the library model or the matching local GLB. To use Ada’s blocking on this rig instead, choose **Use Ada’s sample take** with the rig selected. The button keeps Ada’s spawn, path and turn but fills in this rig’s clip names and 1.2 m/s reference speed. For pasted or saved JSON, use these exact names; changing only the filename from `Visitor.glb` is not sufficient.
 
 For another compatible character, **Local GLB → Generate humanoid motion** adds that same three-clip inventory without deleting embedded clips. Inspect the [rig contract](../../packages/humanoid-motion/GLB-CONTRACT.md) first. Use the actual selected basename in `models`; do not assume these clips exist on an arbitrary file imported without generation. A `planwalk.humanoid-rig.v1` bone map is a separate input, not part of a `planwalk.humans.v1` take.
 

@@ -17,9 +17,9 @@ import {
 } from 'lucide-react';
 import type { CastState, HumanCast } from '../scene/humans/cast';
 import { MAX_ACTORS, MAX_JSON_CHARS } from '../scene/humans/take';
-import example from '../../docs/prompts/human-motion-v1.example.json';
-import rigTake from '../../docs/prompts/man-rig.walk-and-greet.json';
-import { library, type LibraryId } from '../scene/humans/library';
+import { isCliplessRiggedVisitor, library, type LibraryId } from '../scene/humans/library';
+import { embeddedClipNames } from '../scene/humans/model';
+import { matchSampleInventory, sampleText, type SampleShot } from '../scene/humans/sampleTakes';
 import { readBoneMap } from '../../packages/humanoid-motion/src/index';
 import contractUrl from '../../packages/humanoid-motion/GLB-CONTRACT.md?url&inline';
 import mapExampleUrl from '../../packages/humanoid-motion/examples/studio-visitor.rig.json?url&inline';
@@ -67,17 +67,39 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
   const [source, setSource] = useState<'library' | 'file'>('library');
   const [libraryId, setLibraryId] = useState<LibraryId>('visitor');
   const [files, setFiles] = useState<File[]>([]);
-  const [text, setText] = useState('');
+  // An untouched preset follows the current selection. Editing/pasting/opening JSON turns it
+  // into a literal take: never rewrite an author's clip names or marks behind their back.
+  const [draft, setDraft] = useState<string | { shot: SampleShot }>('');
+  const [manifest, setManifest] = useState<{ file: File; names: string[] | null }>();
   const [generate, setGenerate] = useState(false);
   const [mapText, setMapText] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
   const full = state.people.length >= MAX_ACTORS;
-  const rigSelected =
+  const localFile = source === 'file' && files.length === 1 ? files[0] : undefined;
+  useEffect(() => {
+    if (!office || !localFile || generate) return;
+    let current = true;
+    void embeddedClipNames(localFile).then((names) => {
+      if (current) setManifest({ file: localFile, names });
+    });
+    return () => {
+      current = false;
+    };
+  }, [office, localFile, generate]);
+  const names = manifest && manifest.file === localFile ? manifest.names : null;
+  const openingWave =
     source === 'library'
       ? libraryId === 'rigged'
-      : files.length === 1 && (generate || files[0].name === library.rigged.file);
+      : !!localFile && (generate || (!!names && isCliplessRiggedVisitor(localFile.name, names.length)));
+  const file = source === 'library' ? library[libraryId].file : localFile?.name;
+  const embedded =
+    source === 'library' && libraryId === 'animated' ? 'visitor' : matchSampleInventory(names ?? []);
+  const inventory = openingWave ? 'humanoid' : embedded;
+  const text =
+    typeof draft === 'string' ? draft : file && inventory ? sampleText(draft.shot, inventory, file) : '';
+  const sampleBlocked = typeof draft !== 'string' && !text;
   useEffect(() => {
     const el = dialog.current!,
       owner = cast.current;
@@ -95,7 +117,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     close();
   };
   const insert = async () => {
-    if (!cast.current || busy || reading) return;
+    if (!cast.current || busy || reading || sampleBlocked) return;
     setBusy(true);
     setError('');
     try {
@@ -129,29 +151,18 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     setError('');
     try {
       const content = await file.text();
-      if (active.current) (kind === 'take' ? setText : setMapText)(content);
+      if (active.current) (kind === 'take' ? setDraft : setMapText)(content);
     } catch {
       if (active.current) setError('Could not read the JSON file.');
     } finally {
       if (active.current) setReading(false);
     }
   };
-  const fillSample = () => {
-    if (!rigSelected) setLibraryId('animated'); // Ada names the clips embedded in Visitor.glb.
-    setText(
-      JSON.stringify(
-        rigSelected
-          ? {
-              ...rigTake,
-              models: {
-                rig: { ...rigTake.models.rig, file: source === 'file' ? files[0].name : library.rigged.file },
-              },
-            }
-          : { ...example, models: { visitor: example.models.visitor }, actors: [example.actors[0]] },
-        null,
-        2
-      )
-    );
+  const fillSample = (shot: SampleShot) => {
+    // Keep the default shelf shortcut for the static Detailed visitor. Never switch away
+    // from the selected rig or substitute a library asset for a local upload.
+    if (source === 'library' && libraryId === 'visitor') setLibraryId('animated');
+    setDraft({ shot });
     setError('');
   };
   return (
@@ -342,23 +353,32 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
           )}
           <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#5d6057]">
             <Footprints size={13} className="mt-0.5 shrink-0" />
-            {text.trim()
-              ? 'The take sets the starting marks and motion.'
-              : rigSelected
-                ? 'Greets you with a wave beside Elena, then idles. No motion JSON needed.'
-                : 'Placed on open floor near Elena, facing the same direction.'}
+            {sampleBlocked
+              ? 'This sample needs one animated character. Select a compatible GLB, enable Generate humanoid motion for one skinned rig, or use Reset JSON to insert without a take.'
+              : text.trim()
+                ? 'The take sets the starting marks and motion.'
+                : openingWave
+                  ? 'Greets you with a wave beside Elena, then idles. No motion JSON needed.'
+                  : 'Placed on open floor near Elena, facing the same direction.'}
           </p>
           {office && (
             <details className="group mt-3 rounded-xl border border-black/10 bg-white px-3">
               <summary className="flex cursor-pointer list-none items-center justify-between py-2.5 text-xs font-semibold">
                 Motion JSON{' '}
                 <span className="ml-auto mr-2 text-[10px] font-normal text-[#6b6860]">
-                  {text.trim() ? 'v1 take' : 'Optional'}
+                  {typeof draft === 'string'
+                    ? text.trim()
+                      ? 'v1 take'
+                      : 'Optional'
+                    : draft.shot === 'ada'
+                      ? 'Ada’s route'
+                      : 'Walk & greet'}
                 </span>
                 <ChevronDown size={13} className="group-open:rotate-180" />
               </summary>
               <p className="mb-2 text-[11px] text-[#626259]">
-                Paste or open a v1 office take. Model filenames must match exactly.
+                Sample buttons use the selected model’s clips. For pasted or opened v1 takes, filenames and
+                clip names must match exactly.
               </p>
               <textarea
                 aria-label="Motion JSON"
@@ -366,7 +386,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                 value={text}
                 spellCheck={false}
                 onChange={(e) => {
-                  setText(e.target.value);
+                  setDraft(e.target.value);
                   setError('');
                 }}
                 placeholder={'{ "format": "planwalk.humans.v1", … }'}
@@ -387,24 +407,33 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                     }}
                   />
                 </label>
-                {(source === 'library' || rigSelected) && (
+                {(source === 'library' || inventory) && (
                   <button
                     className={smallButton}
-                    onClick={fillSample}
+                    onClick={() => fillSample('ada')}
                     title={
-                      rigSelected
-                        ? 'Walk down the aisle, turn and wave'
+                      inventory
+                        ? `Walk to the window seats, turn and wave using ${file}`
                         : 'Select the animated visitor and load Ada’s take'
                     }
                   >
-                    {rigSelected ? 'Use walk & greet take' : 'Use Ada’s sample take'}
+                    Use Ada’s sample take
                   </button>
                 )}
-                {text && (
+                {inventory === 'humanoid' && (
+                  <button
+                    className={smallButton}
+                    onClick={() => fillSample('greet')}
+                    title="Walk down the aisle, turn and wave"
+                  >
+                    Use walk &amp; greet take
+                  </button>
+                )}
+                {draft && (
                   <button
                     className={smallButton}
                     onClick={() => {
-                      setText('');
+                      setDraft('');
                       setError('');
                     }}
                   >
@@ -499,7 +528,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
           </button>
           <button
             onClick={() => void insert()}
-            disabled={busy || reading || full || (source === 'file' && !files.length)}
+            disabled={busy || reading || sampleBlocked || full || (source === 'file' && !files.length)}
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#38594c] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#2b483d] disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Plus size={14} />
