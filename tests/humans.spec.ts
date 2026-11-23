@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import example from '../docs/prompts/human-motion-v1.example.json' with { type: 'json' };
+import rigTake from '../docs/prompts/man-rig.walk-and-greet.json' with { type: 'json' };
 
 const fixture = readFileSync('data/humans/Visitor.glb');
 const trigger = (p: Page) => p.getByRole('button', { name: 'Insert human', exact: true });
@@ -540,4 +541,177 @@ test('the actual detailed local GLB keeps its skin and maps, selects mobile LODs
   expect(result.far).toBeLessThanOrEqual(2_000);
   expect(result.far).toBeGreaterThan(0);
   expect(result.clipError).toContain('no playable clip “Relaxed”');
+});
+
+test('Rigged visitor offers a playable walk & greet take alongside the existing studio models', async ({
+  page,
+}) => {
+  const errors: string[] = [],
+    rigRequests: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('requestfinished', (r) => {
+    if (r.resourceType() === 'fetch' && new URL(r.url()).pathname.endsWith('/man-rig.glb'))
+      rigRequests.push(r.url());
+  });
+  await page.setViewportSize({ width: 1000, height: 600 });
+  await page.goto('/');
+  await expect(page.locator('canvas[data-renderer]')).toBeVisible();
+  await expect.poll(async () => (await people(page)).office).toBeTruthy();
+  const original = await people(page);
+  await trigger(page).click();
+  await page.getByLabel('Library model').selectOption({ label: 'Rigged visitor' });
+  await expect(page.getByRole('dialog')).toContainText('man-rig.glb');
+  await page.locator('summary').filter({ hasText: 'Motion JSON' }).click();
+  await page.getByRole('button', { name: 'Use walk & greet take' }).click();
+  expect(JSON.parse(await page.getByRole('textbox', { name: 'Motion JSON' }).inputValue())).toEqual(rigTake);
+  expect(rigRequests).toHaveLength(0);
+  await insert(page).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const spark = await people(page);
+  expect(spark.actors).toHaveLength(1);
+  expect(spark.actors[0].id).toBe('Human_greeter');
+  expect(spark.actors[0].meshes).toHaveLength(10);
+  await page.getByRole('button', { name: 'Rendering settings', exact: true }).click();
+  await page.getByRole('button', { name: /Triangle mesh/ }).click();
+  await expect(page.locator('canvas[data-renderer]')).toHaveAttribute('data-renderer', 'triangles');
+  const mesh = await people(page);
+  expect(mesh.actors[0].uuid).toBe(spark.actors[0].uuid);
+  expect(mesh).toMatchObject({ guide: original.guide, office: original.office, error: 0 });
+  expect(rigRequests).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+test('man-rig drives weighted vertices, plants its feet, and replays on its own skeleton', async ({
+  page,
+}) => {
+  await stage(page);
+  const r = await page.evaluate(async (take) => {
+    const { cast, three: T, camera, visitor } = window as any;
+    const name = 'man-rig.glb',
+      blob = await (await fetch('/data/humans/' + name)).blob();
+    const file = new File([blob], name);
+    await cast.insert([file], ''); // real local source, no JSON and no embedded animations
+    const current = () => cast.group.children[0];
+    const clock = (dt: number) => cast.update(dt, camera);
+    const joint = (name: string) => current().getObjectByName(name);
+    const pos = (n: string) => current().worldToLocal(joint(n).getWorldPosition(new T.Vector3()));
+    const wrist = () => pos('RightHand_49');
+    const ankle = (left: boolean) => pos(left ? 'LeftFoot_58' : 'RightFoot_63');
+    // Sample an actually drawn, weighted hand vertex, not just an animated Object3D.
+    let mesh: any,
+      id = -1;
+    current().traverseVisible((m: any) => {
+      if (!m.isSkinnedMesh || mesh) return;
+      const { skinIndex: j, skinWeight: w } = m.geometry.attributes;
+      const slot = m.skeleton.bones.indexOf(joint('RightHand_49'));
+      for (const i of m.geometry.index.array) {
+        if ([0, 1, 2, 3].some((k) => j.getComponent(i, k) === slot && w.getComponent(i, k) > 0.55)) {
+          mesh = m;
+          id = i;
+          break;
+        }
+      }
+    });
+    if (!mesh) throw new Error('No drawn hand vertex on the rig');
+    const vertex = () => {
+      current().updateMatrixWorld(true);
+      return current().worldToLocal(mesh.localToWorld(mesh.getVertexPosition(id, new T.Vector3())));
+    };
+    const start = current().position.clone(),
+      low = wrist(),
+      v0 = vertex(),
+      foot = ankle(false);
+    clock(1.22);
+    const high = wrist(),
+      v1 = vertex(),
+      footError = foot.distanceTo(ankle(false));
+    cast.togglePause();
+    clock(1);
+    const paused = v1.distanceTo(vertex());
+    cast.togglePause();
+    clock(0.36);
+    const waveSwing = wrist().distanceTo(high);
+    cast.replay();
+    const replay = v0.distanceTo(vertex());
+    clock(3.6);
+    const settled = wrist().distanceTo(low),
+      chest = joint('Spine2_53').quaternion.clone();
+    clock(2);
+    const breath = chest.angleTo(joint('Spine2_53').quaternion),
+      drift = start.distanceTo(current().position);
+    cast.clear();
+
+    // The sample drives root travel through navigation; the in-place gait plants the stance
+    // foot at 1.2 m/s and lifts the other. Half a cycle later the legs have exchanged roles.
+    await cast.insert('rigged', JSON.stringify(take));
+    const a = ankle(true),
+      b = ankle(false),
+      origin = current().position.clone();
+    clock(0.26);
+    const planted = ankle(true),
+      swing = ankle(false),
+      travel = origin.distanceTo(current().position);
+    clock(0.26);
+    const half = ankle(true).z - ankle(false).z;
+    clock(15);
+    const destination = current().position.toArray();
+    cast.clear();
+
+    // Never replace an explicit empty take with the automatic greeting.
+    const stillTake = {
+      ...take,
+      models: { rig: { file: name } },
+      actors: [{ ...take.actors[0], steps: [] }],
+    };
+    await cast.insert('rigged', JSON.stringify(stillTake));
+    const still = wrist();
+    clock(1.22);
+    const explicitRest = wrist().distanceTo(still);
+    cast.clear();
+    // A different, already animated GLB with this basename keeps its own inventory.
+    let mismatch = '';
+    try {
+      await cast.insert([new File([visitor], name)], JSON.stringify(take));
+    } catch (e) {
+      mismatch = String(e);
+    }
+    return {
+      lift: high.y - low.y,
+      skinLift: v1.y - v0.y,
+      footError,
+      paused,
+      replay,
+      waveSwing,
+      settled,
+      breath,
+      drift,
+      split: a.z - b.z,
+      half,
+      ankleHeight: planted.y - a.y,
+      stanceTravel: a.z - planted.z,
+      swingLift: swing.y - b.y,
+      travel,
+      destination,
+      mismatch,
+      explicitRest,
+    };
+  }, rigTake);
+  expect(r.lift).toBeGreaterThan(0.5);
+  expect(r.skinLift).toBeGreaterThan(0.5);
+  expect(r.waveSwing).toBeGreaterThan(0.045);
+  expect(r.footError).toBeLessThan(0.0001);
+  expect(r.drift).toBe(0);
+  expect(r.paused).toBeLessThan(0.0001);
+  expect(r.replay).toBeLessThan(0.0001);
+  expect(r.settled).toBeLessThan(0.001);
+  expect(r.breath).toBeGreaterThan(0.02);
+  expect(r.split).toBeGreaterThan(0.5);
+  expect(r.half).toBeLessThan(-0.5);
+  expect(Math.abs(r.ankleHeight)).toBeLessThan(0.003);
+  expect(r.swingLift).toBeGreaterThan(0.075);
+  expect(r.stanceTravel).toBeCloseTo(0.26 * 1.2, 2);
+  expect(r.travel).toBeGreaterThan(0.27);
+  expect(r.destination).toEqual([1.35, 0, -0.52]);
+  expect(r.mismatch).toContain('no playable clip “EasyIdle”');
+  expect(r.explicitRest).toBeLessThan(0.0001);
 });

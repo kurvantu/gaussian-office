@@ -18,9 +18,8 @@ import {
 import type { CastState, HumanCast } from '../scene/humans/cast';
 import { MAX_ACTORS, MAX_JSON_CHARS } from '../scene/humans/take';
 import example from '../../docs/prompts/human-motion-v1.example.json';
+import rigTake from '../../docs/prompts/man-rig.walk-and-greet.json';
 import { library, type LibraryId } from '../scene/humans/library';
-import animatedPortrait from '../assets/visitor-preview.webp';
-import detailedPortrait from '../assets/detailed-visitor.webp';
 
 interface Props {
   cast: RefObject<HumanCast | null>;
@@ -70,6 +69,10 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
   const full = state.people.length >= MAX_ACTORS;
+  const rigSelected =
+    source === 'library'
+      ? libraryId === 'rigged'
+      : files.length === 1 && files[0].name === library.rigged.file;
   useEffect(() => {
     const el = dialog.current!,
       owner = cast.current;
@@ -121,10 +124,12 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
     }
   };
   const fillSample = () => {
-    setLibraryId('animated'); // Ada names the clips embedded in Visitor.glb.
+    if (!rigSelected) setLibraryId('animated'); // Ada names the clips embedded in Visitor.glb.
     setText(
       JSON.stringify(
-        { ...example, models: { visitor: example.models.visitor }, actors: [example.actors[0]] },
+        rigSelected
+          ? rigTake
+          : { ...example, models: { visitor: example.models.visitor }, actors: [example.actors[0]] },
         null,
         2
       )
@@ -191,11 +196,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
           {source === 'library' ? (
             <div className="flex items-stretch overflow-hidden rounded-xl border border-[#d6dfd9] bg-[#f1f5f1]">
               <div className="flex w-24 shrink-0 items-end justify-center bg-[#dbe6df]">
-                <img
-                  src={libraryId === 'visitor' ? detailedPortrait : animatedPortrait}
-                  alt=""
-                  className="h-26 w-full object-cover"
-                />
+                <img src={library[libraryId].portrait} alt="" className="h-26 w-full object-cover" />
               </div>
               <div className="min-w-0 flex-1 px-3.5 py-3">
                 <span className="font-mono-tech text-[9px] uppercase tracking-widest text-[#4b6758]">
@@ -219,9 +220,7 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                 <p className="mt-1 text-[11px] leading-relaxed text-[#585e55]">
                   {library[libraryId].file}
                   <br />
-                  {libraryId === 'visitor'
-                    ? '1.86 m · Rest pose · No clips'
-                    : '1.76 m · Idle, walk and wave clips'}
+                  {library[libraryId].description}
                 </p>
               </div>
               <Check size={15} aria-label="Selected" className="m-3 shrink-0 text-[#416054]" />
@@ -255,7 +254,9 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
             <Footprints size={13} className="mt-0.5 shrink-0" />
             {text.trim()
               ? 'The take sets the starting marks and motion.'
-              : 'Placed on open floor near Elena, facing the same direction.'}
+              : rigSelected
+                ? 'Greets you with a wave beside Elena, then idles. No motion JSON needed.'
+                : 'Placed on open floor near Elena, facing the same direction.'}
           </p>
           {office && (
             <details className="group mt-3 rounded-xl border border-black/10 bg-white px-3">
@@ -296,13 +297,17 @@ function LibraryDialog({ cast, state, office, onInserted, close }: Props & { clo
                     }}
                   />
                 </label>
-                {source === 'library' && (
+                {(source === 'library' || rigSelected) && (
                   <button
                     className={smallButton}
                     onClick={fillSample}
-                    title="Select the animated visitor and load Ada’s take"
+                    title={
+                      rigSelected
+                        ? 'Walk down the aisle, turn and wave'
+                        : 'Select the animated visitor and load Ada’s take'
+                    }
                   >
-                    Use Ada’s sample take
+                    {rigSelected ? 'Use walk & greet take' : 'Use Ada’s sample take'}
                   </button>
                 )}
                 {text && (

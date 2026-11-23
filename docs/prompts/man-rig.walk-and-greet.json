@@ -1,0 +1,18 @@
+{
+  "format": "planwalk.humans.v1",
+  "preset": "office",
+  "models": {
+    "rig": { "file": "man-rig.glb", "idleClip": "EasyIdle", "walkClip": "HallwayWalk_IP", "walkRefMps": 1.2 }
+  },
+  "actors": [
+    {
+      "id": "greeter", "model": "rig",
+      "spawn": { "x": -1.5, "z": -0.52, "yawDeg": 90 },
+      "steps": [
+        { "op": "walkTo", "x": 1.35, "z": -0.52, "speedMps": 1.2 },
+        { "op": "turnTo", "yawDeg": 35, "durationSec": 0.55 },
+        { "op": "play", "clip": "WelcomeWave" }
+      ]
+    }
+  ]
+}
