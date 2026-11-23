@@ -2,7 +2,7 @@ import * as T from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildDetailLods, fitSkinPalettes, TRIANGLES, type GeometryLods } from './detail';
 import { planImages, useImageBudget } from './imageBudget';
-import { library } from './library';
+import { isCliplessRiggedVisitor, library } from './library';
 import {
   bindHumanoid,
   createHumanoidClips,
@@ -11,7 +11,11 @@ import {
   RigError,
   type BoneMap,
 } from '../../../packages/humanoid-motion/src/index';
-import { readEnvelope } from '../../../packages/humanoid-motion/src/envelope';
+import {
+  glbJsonLength,
+  readEnvelope,
+  type GlbDocument,
+} from '../../../packages/humanoid-motion/src/envelope';
 import visitorMap from '../../../packages/humanoid-motion/examples/man-rig.rig.json';
 
 export interface GenerateMotion {
@@ -19,6 +23,19 @@ export interface GenerateMotion {
 }
 
 export const MAX_GLB_BYTES = 8 * 1024 * 1024;
+/** Hints for the take picker, not model validation. Never read textures or fetch sidecars here. */
+export async function embeddedClipNames(file: File): Promise<string[] | null> {
+  if (!/\.glb$/i.test(file.name) || file.size > MAX_GLB_BYTES) return null;
+  try {
+    const length = glbJsonLength(new DataView(await file.slice(0, 20).arrayBuffer()), file.size);
+    const doc: GlbDocument = JSON.parse(await file.slice(20, 20 + length).text());
+    // Keep unnamed entries: they still count as embedded clips in GLTFLoader.
+    return (doc.animations ?? []).map((clip, i) => clip.name || `animation_${i}`);
+  } catch {
+    return null; // The normal import path reports malformed/unsupported GLBs.
+  }
+}
+
 export interface HumanModel {
   scene: T.Group;
   animations: T.AnimationClip[];
@@ -306,7 +323,7 @@ export async function loadModel(
     if (imageError) throw new Error('Could not decode an embedded texture.');
     await inspect(model, signal);
     signal.throwIfAborted();
-    if (generate || (file.name === library.rigged.file && !model.animations.length)) {
+    if (generate || isCliplessRiggedVisitor(file.name, model.animations.length)) {
       try {
         // Explicit generation works on ANY filename. The old automatic shelf greeting
         // stays opt-in by its exact profile for backwards compatibility.

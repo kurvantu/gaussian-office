@@ -23,23 +23,30 @@ export interface GlbDocument {
   skins?: { joints: number[] }[];
   extensionsUsed?: string[];
   extensionsRequired?: string[];
-  animations?: unknown[];
+  animations?: { name?: string }[];
 }
-export function readEnvelope(bytes: ArrayBuffer, maxNodes: number, maxElements: number) {
-  const view = new DataView(bytes);
+
+/** Only the first 20 bytes are needed to locate the JSON (e.g. for local clip-name hints). */
+export function glbJsonLength(view: DataView, fileSize: number) {
   if (
-    bytes.byteLength < 28 ||
+    view.byteLength < 20 ||
+    fileSize < 28 ||
     view.getUint32(0, true) !== 0x46546c67 ||
     view.getUint32(4, true) !== 2 ||
-    view.getUint32(8, true) !== bytes.byteLength ||
+    view.getUint32(8, true) !== fileSize ||
     view.getUint32(16, true) !== 0x4e4f534a
   )
     throw new Error('Expected a binary glTF 2.0 (.glb) file.');
-  const jsonLength = view.getUint32(12, true),
+  const length = view.getUint32(12, true);
+  if (length % 4 || 28 + length > fileSize) throw new Error('Invalid binary GLB chunk.');
+  return length;
+}
+
+export function readEnvelope(bytes: ArrayBuffer, maxNodes: number, maxElements: number) {
+  const view = new DataView(bytes),
+    jsonLength = glbJsonLength(view, bytes.byteLength),
     binStart = 28 + jsonLength;
   if (
-    jsonLength % 4 ||
-    binStart > bytes.byteLength ||
     view.getUint32(binStart - 4, true) !== 0x004e4942 ||
     view.getUint32(binStart - 8, true) !== bytes.byteLength - binStart ||
     (bytes.byteLength - binStart) % 4

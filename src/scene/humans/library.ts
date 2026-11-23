@@ -35,3 +35,7 @@ export const library = {
   },
 } as const;
 export type LibraryId = keyof typeof library;
+
+export function isCliplessRiggedVisitor(file: string, clipCount: number) {
+  return file === library.rigged.file && clipCount === 0;
+}

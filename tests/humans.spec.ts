@@ -14,15 +14,20 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
-async function people(page: Page) {
-  return page.evaluate(() => {
+async function people(page: Page, secondsAfterReplay?: number) {
+  return page.evaluate((seconds) => {
     const el = document.querySelector('canvas[data-renderer]')!.parentElement!;
     let f = (el as any)[Object.keys(el).find((k) => k.startsWith('__reactFiber'))!];
     while (!f.type?.name?.startsWith('Scene3DViewport')) f = f.return;
     let h = f.memoizedState;
     while (!h.memoizedState?.current?.scene) h = h.next;
     const e = h.memoizedState.current;
+    if (seconds !== undefined) {
+      e.humanCast.replay();
+      e.humanCast.update(seconds, e.camera.position);
+    }
     return {
+      actions: e.humanCast.actors.map((a: any) => a.action?.getClip().name),
       actors: e.humanCast.group.children.map((root: any) => {
         const meshes: string[] = [];
         root.traverseVisible((m: any) => {
@@ -35,7 +40,7 @@ async function people(page: Page) {
       office: e.officeEnvironment?.uuid,
       error: e.renderer.getContext().getError(),
     };
-  });
+  }, secondsAfterReplay);
 }
 
 test('insert a studio visitor and a local GLB without replacing the guide or the scan', async ({ page }) => {
@@ -581,6 +586,82 @@ test('Rigged visitor offers a playable walk & greet take alongside the existing 
   expect(errors).toEqual([]);
 });
 
+const adaOnRig = {
+  ...ada,
+  models: { visitor: rigTake.models.rig },
+  actors: [
+    { ...ada.actors[0], steps: [...ada.actors[0].steps.slice(0, -1), { op: 'play', clip: 'WelcomeWave' }] },
+  ],
+};
+
+test('local man-rig.glb plays Ada’s window-seat take on the selected rig, not the library Ada', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 980, height: 640 });
+  await page.goto('/');
+  await trigger(page).click();
+  await page.getByRole('button', { name: 'Local GLB', exact: true }).click();
+  await page.getByLabel('Human GLB files').setInputFiles('data/humans/man-rig.glb');
+  await expect(page.getByRole('checkbox', { name: 'Generate humanoid motion' })).not.toBeChecked();
+  await page.locator('summary').filter({ hasText: 'Motion JSON' }).click();
+  await page.getByRole('button', { name: 'Use Ada’s sample take' }).click();
+  expect(JSON.parse(await page.getByRole('textbox', { name: 'Motion JSON' }).inputValue())).toEqual(adaOnRig);
+  await insert(page).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const start = await people(page, 0);
+  expect(start.actors[0]).toMatchObject({ id: 'Human_ada', pos: [0.5, 0, -0.6] });
+  expect(start.actors[0].meshes).toHaveLength(10); // the uploaded dressed rig, not Visitor.glb
+  expect(start.actions).toEqual(['HallwayWalk_IP']);
+  const end = await people(page, 30);
+  expect(end.actors[0].pos).toEqual([-4.4, 0, -2.82]);
+  expect(end.actions).toEqual(['EasyIdle']);
+  expect(end.error).toBe(0);
+});
+
+test('a stock sample follows model changes; edited JSON stays literal and reports the real inventory', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await trigger(page).click();
+  await page.locator('summary').filter({ hasText: 'Motion JSON' }).click();
+  const button = page.getByRole('button', { name: 'Use Ada’s sample take' });
+  const json = page.getByRole('textbox', { name: 'Motion JSON' });
+  await button.click();
+  expect(JSON.parse(await json.inputValue())).toEqual(ada);
+  await page.getByLabel('Library model').selectOption('rigged');
+  expect(JSON.parse(await json.inputValue())).toEqual(adaOnRig);
+  await button.click();
+  await expect(page.getByLabel('Library model')).toHaveValue('rigged');
+  await page.getByRole('button', { name: 'Local GLB', exact: true }).click();
+  const files = page.getByLabel('Human GLB files');
+  const generate = page.getByRole('checkbox', { name: 'Generate humanoid motion' });
+  await files.setInputFiles('data/humans/man-2-unrig.glb');
+  await expect(insert(page)).toBeDisabled(); // no clips: don't silently insert at rest or submit the stale sample
+  await expect(json).toHaveValue('');
+  // Same basename, different GLB. Its embedded inventory wins, unless generation is requested.
+  await files.setInputFiles({ name: 'man-rig.glb', mimeType: 'model/gltf-binary', buffer: fixture });
+  const native = { ...ada, models: { visitor: { ...ada.models.visitor, file: 'man-rig.glb' } } };
+  await expect(json).toHaveValue(JSON.stringify(native, null, 2));
+  await generate.check();
+  expect(JSON.parse(await json.inputValue())).toEqual(adaOnRig);
+  await generate.uncheck();
+  await expect(json).toHaveValue(JSON.stringify(native, null, 2));
+
+  // A saved/edited take with just the filename changed is not a sample-button invocation.
+  const literal = JSON.stringify(native);
+  await json.fill(literal);
+  await files.setInputFiles('data/humans/man-rig.glb');
+  await expect(json).toHaveValue(literal);
+  await insert(page).click();
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText('models.visitor.idleClip: no playable clip “Relaxed” in man-rig.glb');
+  for (const clip of ['EasyIdle', 'HallwayWalk_IP', 'WelcomeWave']) await expect(alert).toContainText(clip);
+  expect((await people(page)).actors).toHaveLength(0);
+  await button.click();
+  expect(JSON.parse(await json.inputValue())).toEqual(adaOnRig);
+  await expect(alert).toHaveCount(0);
+});
+
 test('man-rig drives weighted vertices, plants its feet, and replays on its own skeleton', async ({
   page,
 }) => {
@@ -750,13 +831,11 @@ test('a custom GLB can generate humanoid motion by role map; a failed bind leave
   await expect(page.getByRole('alert')).toContainText('rightHand: not recognized');
   expect((await people(page)).actors).toHaveLength(0);
   await page.locator('summary').filter({ hasText: 'Rig requirements' }).click();
-  await page
-    .getByLabel('Open bone map file')
-    .setInputFiles({
-      name: 'Guest.rig.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify({ format: 'planwalk.humanoid-rig.v1', bones: { rightHand: hand } })),
-    });
+  await page.getByLabel('Open bone map file').setInputFiles({
+    name: 'Guest.rig.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ format: 'planwalk.humanoid-rig.v1', bones: { rightHand: hand } })),
+  });
   await expect(page.getByLabel('Bone map JSON', { exact: false })).toContainText(hand);
   await page.locator('summary').filter({ hasText: 'Motion JSON' }).click();
   await page.getByRole('button', { name: 'Use walk & greet take' }).click();

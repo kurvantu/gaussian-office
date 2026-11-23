@@ -5,6 +5,7 @@ import { meshLevels, type HumanModel } from './model';
 import { canStand, checkedPath, type ActorSpec, type ModelSpec, type Navigation, type Step } from './take';
 
 const rad = T.MathUtils.degToRad;
+const playable = (clip?: T.AnimationClip) => !!clip && Number.isFinite(clip.duration) && clip.duration > 0;
 const LOD_DISTANCES = [4, 8, 14];
 interface JointPose {
   bone: T.Bone;
@@ -69,9 +70,12 @@ export class HumanActor {
   }
 
   private requireClip(name: string, field: string) {
-    const clip = this.clips.get(name);
-    if (!clip || !(clip.duration > 0) || !Number.isFinite(clip.duration)) {
-      throw new Error(`${field}: no playable clip “${name}” in ${this.asset.file}.`);
+    if (!playable(this.clips.get(name))) {
+      const available = [...this.clips.values()].filter(playable).map((c) => c.name);
+      const hint = available.length
+        ? `Available clips: ${available.slice(0, 8).join(', ')}${available.length > 8 ? ', …' : ''}.`
+        : 'This model has no playable clips.';
+      throw new Error(`${field}: no playable clip “${name}” in ${this.asset.file}. ${hint}`);
     }
   }
 
